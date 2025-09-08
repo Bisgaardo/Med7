@@ -38,10 +38,11 @@ public class GaussianSplatRenderer : MonoBehaviour
         // Allocate buffers
         splatBuffer   = new ComputeBuffer(MaxSplats, 64);
         visibleBuffer = new ComputeBuffer(MaxSplats, sizeof(uint), ComputeBufferType.Append);
-        argsBuffer    = new ComputeBuffer(1, sizeof(uint) * 5, ComputeBufferType.IndirectArguments);
-
-        // Init draw args: 4 verts per quad, instance count written later
-        var args = new uint[5] {4, 0, 0, 0, 0};
+        // DrawProceduralIndirect expects 4 uints: [0]=vertexCountPerInstance, [1]=instanceCount, [2]=startVertex, [3]=startInstance
+        argsBuffer    = new ComputeBuffer(1, sizeof(uint) * 4, ComputeBufferType.IndirectArguments);
+        // 6 verts per quad (two triangles). instanceCount will be filled via CopyCount below.
+        var args = new uint[4] {6, 0, 0, 0};
+        argsBuffer.SetData(args);
         argsBuffer.SetData(args);
 
         // Generate small random cloud
@@ -111,7 +112,7 @@ public class GaussianSplatRenderer : MonoBehaviour
 
         // Draw instanced quads
         var bounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
-        Graphics.DrawProceduralIndirect(billboardMat, bounds, MeshTopology.TriangleStrip, argsBuffer);
+        Graphics.DrawProceduralIndirect(billboardMat, bounds, MeshTopology.Triangles, argsBuffer);
     }
 
     void Update()
@@ -127,7 +128,7 @@ public class GaussianSplatRenderer : MonoBehaviour
         GL.Clear(false, true, Color.clear);
         billboardMat.EnableKeyword("_IDPASS");
         Graphics.DrawProceduralIndirect(billboardMat, new Bounds(Vector3.zero, Vector3.one * 1000f),
-            MeshTopology.TriangleStrip, argsBuffer);
+            MeshTopology.Triangles, argsBuffer);
         billboardMat.DisableKeyword("_IDPASS");
         RenderTexture.active = old;
     }
