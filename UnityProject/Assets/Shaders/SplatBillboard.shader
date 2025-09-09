@@ -1,5 +1,10 @@
 Shader "Custom/SplatBillboard"
 {
+    Properties
+    {
+        _EdgeSigma ("Edge Sigma at Quad Edge", Float) = 3.0
+    }
+
     SubShader
     {
         Tags { "Queue"="Transparent" }
@@ -35,6 +40,9 @@ Shader "Custom/SplatBillboard"
             float  _SelectBoost;  // alpha boost for selected
             float  _SelectScale;  // scale factor for selected splat radius
             float  _DimOthers;    // 1=no dim; <1 dims non-selected
+
+            // Edge shaping
+            float _EdgeSigma;     // how many sigmas at the quad edge (default 3)
 
             struct Attributes {
                 uint vertexID   : SV_VertexID;
@@ -91,7 +99,7 @@ Shader "Custom/SplatBillboard"
                 clip.xy += base * radius * clip.w;
 
                 o.pos = clip;
-                o.uv  = base;
+                o.uv  = base;   // -1..1 at edges
                 o.col = s.col;
                 o.sel = isSel ? 1.0 : 0.0;
                 return o;
@@ -99,9 +107,13 @@ Shader "Custom/SplatBillboard"
 
             float4 frag (Varyings i) : SV_Target
             {
-                // 2D Gaussian in quad UV
-                float a   = exp(-0.5 * dot(i.uv, i.uv));
-                float4 col = i.col * a;              // premultiplied RGBA
+                // Scale UV so that |uv|=1 corresponds to EdgeSigma sigmas
+                float sigma = max(_EdgeSigma, 0.1);
+                float r2 = dot(i.uv, i.uv) * (sigma * sigma);
+                // Gaussian alpha with edge near ~exp(-0.5 * sigma^2)
+                float a = exp(-0.5 * r2);
+
+                float4 col = i.col * a; // premultiplied RGBA
 
                 bool hasSel = (_ShowIDMask == 1 && _IDMaskCount > 0);
 
