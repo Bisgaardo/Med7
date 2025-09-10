@@ -37,7 +37,7 @@ Shader "Custom/SplatTriangle"
                 else if (v.id == 1) { p = s.v1; c = s.c1; }
                 else { p = s.v2; c = s.c2; }
                 VSOUT o;
-                o.pos = UnityObjectToClipPos(float4(p,1));
+                o.pos = mul(UNITY_MATRIX_VP, float4(p,1));
                 o.col = c;
                 return o;
             }
