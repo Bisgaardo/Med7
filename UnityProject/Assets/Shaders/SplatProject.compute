@@ -1,0 +1,82 @@
+// SplatProject.compute
+// Stable frustum + (optional) size cull for surface-aligned splats.
+// Packing expected: cov0 = T*sigmaT, cov1 = B*sigmaT, cov2 = N*sigmaN.
+
+#pragma kernel CSMain
+
+// --- Must match your C#/shader 64-byte layout ---
+struct Splat
+{
+    float3 pos;
+    float4 col;
+    float3 cov0;   // world tangent * sigmaT
+    float3 cov1;   // world bitangent * sigmaT
+    float3 cov2;   // world normal  * sigmaN
+};
+
+// Inputs/outputs
+StructuredBuffer<Splat>        SplatData;
+AppendStructuredBuffer<uint>   VisibleIndices;
+
+// Params (set from C#)
+cbuffer Params
+{
+    uint     _Count;
+    float4x4 _VP;           // projection * view (column-major)
+    float2   _Screen;       // (width, height)
+    float    _MinPixels;    // 0 = no size culling
+    float    _GlobalScale;  // same scale used by the material
+    float    _Pad0;
+};
+
+// Project world → NDC; return false if behind clip plane
+inline bool ProjectToNDC(float3 worldPos, out float3 ndc)
+{
+    float4 clip = mul(_VP, float4(worldPos, 1.0));
+    if (clip.w <= 0.0) { ndc = 0; return false; }
+    float invW = 1.0 / clip.w;
+    ndc = clip.xyz * invW; // -1..1
+    return true;
+}
+
+[numthreads(64,1,1)]
+void CSMain (uint3 tid : SV_DispatchThreadID)
+{
+    uint i = tid.x;
+    if (i >= _Count) return;
+
+    Splat s = SplatData[i];
+
+    // --- Frustum test in NDC (with a small slack to avoid flicker on edges) ---
+    float3 ndc;
+    if (!ProjectToNDC(s.pos, ndc)) return;
+
+    const float slack = 1.05;
+    if (ndc.x < -slack || ndc.x > slack || ndc.y < -slack || ndc.y > slack || ndc.z < -slack || ndc.z > slack)
+        return;
+
+    // --- Optional screen-size cull (view-correct using surface axes) ---
+    if (_MinPixels > 0.0f)
+    {
+        float scale = max(0.01, _GlobalScale);
+        float3 axW = s.cov0 * scale; // world-space axis X
+        float3 ayW = s.cov1 * scale; // world-space axis Y
+
+        float3 ndcX, ndcY;
+        // project endpoints; if projection fails, keep the splat (conservative)
+        bool okX = ProjectToNDC(s.pos + axW, ndcX);
+        bool okY = ProjectToNDC(s.pos + ayW, ndcY);
+
+        float2 dX = okX ? (ndcX.xy - ndc.xy) : 0;
+        float2 dY = okY ? (ndcY.xy - ndc.xy) : 0;
+
+        // NDC → pixels; take max of the two in-plane axes
+        float pxX = length(dX) * 0.5 * _Screen.x;
+        float pxY = length(dY) * 0.5 * _Screen.y;
+        float px  = max(pxX, pxY);
+
+        if (px < _MinPixels) return;
+    }
+
+    VisibleIndices.Append(i);
+}
