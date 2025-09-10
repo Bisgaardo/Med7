@@ -191,39 +191,44 @@ void OnValidate()
         #endif
     }
 
-    public void LoadSplatsFromList(List<MeshToGaussianSplats.Splat> list)
+ComputeBuffer triSplatBuffer;
+Material triSplatMat;
+public Shader triSplatShader;
+
+public void LoadTriSplatsFromList(List<TriSplat> list)
+{
+    // release old buffer
+    triSplatBuffer?.Release();
+
+    if (list == null || list.Count == 0)
     {
-        generateDemoCloudOnEnable = false;
-        MaxSplats = Mathf.Max(1, list?.Count ?? 0);
-
-        splatBuffer?.Release();
-        splatBuffer = new ComputeBuffer(MaxSplats, 64);
-        if (list != null && list.Count > 0) splatBuffer.SetData(list);
-
-        EnsureVisibleBufferCapacity(MaxSplats);
-
-        if (billboardMat != null)
-            billboardMat.SetBuffer("_SplatData", splatBuffer);
-
-        // capture anchors
-        _debugAnchors.Clear();
-        if (list != null && list.Count > 0)
-        {
-            int step = Mathf.Max(1, list.Count / Mathf.Max(1, debugAnchorCount));
-            for (int i = 0; i < list.Count && _debugAnchors.Count < debugAnchorCount; i += step)
-                _debugAnchors.Add(list[i].pos);
-        }
-
-        // 0..N-1 list for bypass
-        if (MaxSplats > 0)
-        {
-            if (_seqIndices == null || _seqIndices.Length != MaxSplats)
-            {
-                _seqIndices = new uint[MaxSplats];
-                for (uint i = 0; i < _seqIndices.Length; i++) _seqIndices[i] = i;
-            }
-        }
+        triSplatBuffer = null;
+        Debug.LogWarning("[GS] No triangle splats provided.");
+        return;
     }
+
+    // Each TriSplat = 3x float3 (vertices) + 3x float4 (colors)
+    int stride = (3 * 3 * sizeof(float)) + (3 * 4 * sizeof(float));
+    triSplatBuffer = new ComputeBuffer(list.Count, stride);
+    triSplatBuffer.SetData(list);
+
+    if (triSplatMat == null && triSplatShader != null)
+        triSplatMat = new Material(triSplatShader);
+
+    if (triSplatMat != null)
+        triSplatMat.SetBuffer("_TriSplatData", triSplatBuffer);
+
+    Debug.Log($"[GS] Loaded {list.Count} triangle splats into renderer.");
+}
+
+public void DrawTriangles(Camera cam)
+{
+    if (triSplatBuffer == null || triSplatMat == null) return;
+
+    var bounds = new Bounds(Vector3.zero, Vector3.one * 10000f);
+    Graphics.DrawProceduralNow(MeshTopology.Triangles, 3, triSplatBuffer.count);
+}
+
 
     void EnsureVisibleBufferCapacity(int needed)
     {
