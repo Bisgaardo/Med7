@@ -24,9 +24,14 @@ public class GaussianSplatRenderer : MonoBehaviour
     [Range(0.25f, 4f)] public float GlobalSizeScale = 1f;    // manual multiplier if AutoSize is off
 
     [Header("Shaders")]
-    public ComputeShader projectCS;          // Assets/Shaders/SplatProject.compute
+    public ComputeShader  projectCS;          // Assets/Shaders/SplatProject.compute
     public Shader         billboardShader;   // Custom/SplatBillboard* (color pass)
     public Shader         idShader;          // Custom/SplatBillboardID (ID pass) — optional
+    public Shader         triSplatShader;
+
+    public enum RenderMode { Points, Triangles }
+    [Header("Render Mode")]
+    public RenderMode renderMode = RenderMode.Triangles;
 
     [Header("Debug")]
     public bool debugHugeBounds   = true;    // draw with gigantic bounds (skip occlusion)
@@ -50,8 +55,8 @@ public class GaussianSplatRenderer : MonoBehaviour
     public Material material => billboardMat;
     public bool generateDemoCloudOnEnable = false;   // leave OFF to use baked data only
     Camera cam;
-Shader _lastBillboardShader;
-Shader _lastIDShader;
+    Shader _lastBillboardShader;
+    Shader _lastIDShader;
     // Hotkeys
     #if ENABLE_INPUT_SYSTEM
     InputActionMap _hotkeyMap;
@@ -66,6 +71,10 @@ Shader _lastIDShader;
     List<Vector3> _debugAnchors = new List<Vector3>();
 
     struct Splat { public Vector3 pos; public Vector4 col; public Vector3 cov0, cov1, cov2; }
+
+    [Header("Shaders")]
+    Material triMat;
+
 
 
 // [ADD] Rebuild materials if the assigned shader changed (or if mats are null)
@@ -98,43 +107,48 @@ void EnsureMaterials()
     }
 }
 
-    void OnEnable()
+void OnEnable()
+{
+    cam = Camera.main;
+
+    // create visibility & args buffers
+    int cap = Mathf.Max(1, MaxSplats);
+    visibleBuffer = new ComputeBuffer(cap, sizeof(uint), ComputeBufferType.Append);
+    argsBuffer    = new ComputeBuffer(1, sizeof(uint) * 5, ComputeBufferType.IndirectArguments);
+    argsBuffer.SetData(new uint[5] { 6, 0, 0, 0, 0 }); // 6 verts / instance
+
+    // make sure billboard/id materials exist
+    EnsureMaterials();
+
+    // ✅ FIXED: create triangle material here
+    if (triMat == null && triSplatShader != null)
+        triMat = new Material(triSplatShader) { hideFlags = HideFlags.HideAndDontSave };
+
+    // optional demo cloud (unchanged)
+    if (splatBuffer == null && generateDemoCloudOnEnable)
     {
-        cam = Camera.main;
-
-        // create visibility & args buffers
-        int cap = Mathf.Max(1, MaxSplats);
-        visibleBuffer = new ComputeBuffer(cap, sizeof(uint), ComputeBufferType.Append);
-        argsBuffer    = new ComputeBuffer(1, sizeof(uint) * 5, ComputeBufferType.IndirectArguments);
-        argsBuffer.SetData(new uint[5] { 6, 0, 0, 0, 0 }); // 6 verts / instance
-        // [ADD]
-        EnsureMaterials();
-
-        // optional demo cloud
-        if (splatBuffer == null && generateDemoCloudOnEnable)
+        var rnd = new System.Random(0);
+        var data = new Splat[cap];
+        for (int i = 0; i < cap; i++)
         {
-            var rnd = new System.Random(0);
-            var data = new Splat[cap];
-            for (int i = 0; i < cap; i++)
-            {
-                data[i].pos = new Vector3(
-                    (float)rnd.NextDouble() * 2f - 1f,
-                    (float)rnd.NextDouble() * 2f - 1f,
-                    (float)rnd.NextDouble() * 2f - 1f) * 2f;
+            data[i].pos = new Vector3(
+                (float)rnd.NextDouble() * 2f - 1f,
+                (float)rnd.NextDouble() * 2f - 1f,
+                (float)rnd.NextDouble() * 2f - 1f) * 2f;
 
-                data[i].col = new Color(
-                    (float)rnd.NextDouble(),
-                    (float)rnd.NextDouble(),
-                    (float)rnd.NextDouble(), 1f);
+            data[i].col = new Color(
+                (float)rnd.NextDouble(),
+                (float)rnd.NextDouble(),
+                (float)rnd.NextDouble(), 1f);
 
-                float s = 0.03f + 0.02f * (float)rnd.NextDouble();
-                data[i].cov0 = new Vector3(s, 0, 0);
-                data[i].cov1 = new Vector3(0, s, 0);
-                data[i].cov2 = new Vector3(0, 0, s);
-            }
-            splatBuffer = new ComputeBuffer(cap, 64);
-            splatBuffer.SetData(data);
+            float s = 0.03f + 0.02f * (float)rnd.NextDouble();
+            data[i].cov0 = new Vector3(s, 0, 0);
+            data[i].cov1 = new Vector3(0, s, 0);
+            data[i].cov2 = new Vector3(0, 0, s);
         }
+        splatBuffer = new ComputeBuffer(cap, 64);
+        splatBuffer.SetData(data);
+    }
 
         if (billboardMat == null && billboardShader != null)
             billboardMat = new Material(billboardShader) { hideFlags = HideFlags.HideAndDontSave };
@@ -193,41 +207,65 @@ void OnValidate()
 
 ComputeBuffer triSplatBuffer;
 Material triSplatMat;
-public Shader triSplatShader;
 
 public void LoadTriSplatsFromList(List<TriSplat> list)
 {
+    generateDemoCloudOnEnable = false;
+
+    int count = (list != null) ? list.Count : 0;
+    MaxSplats = Mathf.Max(1, count);
+
     // release old buffer
-    triSplatBuffer?.Release();
+    splatBuffer?.Release();
 
-    if (list == null || list.Count == 0)
-    {
-        triSplatBuffer = null;
-        Debug.LogWarning("[GS] No triangle splats provided.");
-        return;
-    }
+    // Each TriSplat = 3*float3 (36 bytes) + 3*float4 (48 bytes) = 84 bytes
+    int stride = (3 * 3 * sizeof(float)) + (3 * 4 * sizeof(float)); 
+    splatBuffer = new ComputeBuffer(MaxSplats, stride);
+    if (count > 0)
+        splatBuffer.SetData(list);
 
-    // Each TriSplat = 3x float3 (vertices) + 3x float4 (colors)
-    int stride = (3 * 3 * sizeof(float)) + (3 * 4 * sizeof(float));
-    triSplatBuffer = new ComputeBuffer(list.Count, stride);
-    triSplatBuffer.SetData(list);
+    if (triMat == null && triSplatShader != null)
+        triMat = new Material(triSplatShader) { hideFlags = HideFlags.HideAndDontSave };
 
-    if (triSplatMat == null && triSplatShader != null)
-        triSplatMat = new Material(triSplatShader);
+    if (triMat != null)
+        triMat.SetBuffer("_TriSplatData", splatBuffer);
 
-    if (triSplatMat != null)
-        triSplatMat.SetBuffer("_TriSplatData", triSplatBuffer);
-
-    Debug.Log($"[GS] Loaded {list.Count} triangle splats into renderer.");
+    Debug.Log($"[GS] Loaded {count} triangle splats into renderer.");
 }
+
+
+public void LoadSplatsFromList(List<MeshToGaussianSplats.Splat> list)
+{
+    generateDemoCloudOnEnable = false;
+
+    MaxSplats = Mathf.Max(1, list?.Count ?? 0);
+
+    // (re)create splat buffer
+    splatBuffer?.Release();
+    splatBuffer = new ComputeBuffer(MaxSplats, 64);
+    if (list != null && list.Count > 0) splatBuffer.SetData(list);
+
+    // make sure visibility buffer can hold all indices
+    EnsureVisibleBufferCapacity(MaxSplats);
+
+    // hook material
+    if (billboardMat != null)
+        billboardMat.SetBuffer("_SplatData", splatBuffer);
+}
+
 
 public void DrawTriangles(Camera cam)
 {
-    if (triSplatBuffer == null || triSplatMat == null) return;
+    if (splatBuffer == null || triMat == null) return;
 
     var bounds = new Bounds(Vector3.zero, Vector3.one * 10000f);
-    Graphics.DrawProceduralNow(MeshTopology.Triangles, 3, triSplatBuffer.count);
+
+    // Draw N triangles (3 verts each)
+    Graphics.DrawProcedural(
+        triMat, bounds, MeshTopology.Triangles, 3, MaxSplats
+    );
 }
+
 
 
     void EnsureVisibleBufferCapacity(int needed)
@@ -386,14 +424,23 @@ EnsureMaterials();
         billboardMat.SetFloat("_DimOthers",   Mathf.Clamp01(dimOthers));
     }
 
-    // Simple auto-render for Main Camera (optional; URP feature can call Render())
-    void Update()
+void Update()
+{
+    var camNow = Camera.main;
+    if (camNow == null) return;
+
+    switch (renderMode)
     {
-        if (!generateDemoCloudOnEnable && splatBuffer == null) return;
-        var camNow = Camera.main;
-        if (camNow == null) return;
-        DrawColor(camNow);
+        case RenderMode.Points:
+            DrawColor(camNow);      // Gaussian discs
+            break;
+
+        case RenderMode.Triangles:
+            DrawTriangles(camNow);  // Triangle splats
+            break;
     }
+}
+
 
     public void Render(Camera cam) => DrawColor(cam);
 
@@ -405,22 +452,38 @@ EnsureMaterials();
         return arr[0];
     }
 
-    #if ENABLE_INPUT_SYSTEM
-    void DoHotkeyBake()
+#if ENABLE_INPUT_SYSTEM
+void DoHotkeyBake()
+{
+    int count = 0;
+
+    // Point-splat bakers
+    var pointBakers = FindObjectsByType<MeshToGaussianSplats>(FindObjectsSortMode.None);
+    foreach (var b in pointBakers)
     {
-        var bakers = FindObjectsByType<MeshToGaussianSplats>(FindObjectsSortMode.None);
-        int count = 0;
-        foreach (var b in bakers)
+        if (b != null && b.targetRenderer == this)
         {
-            if (b != null && b.targetRenderer == this)
-            {
-                b.BakeToRenderer(this);
-                count++;
-            }
+            b.BakeToRenderer(this);
+            count++;
         }
-        Debug.Log($"[GaussianSplatRenderer] F9 bake: {count} baker(s) updated for '{name}'.");
     }
-    #endif
+
+    // Triangle-splat bakers
+    var triBakers = FindObjectsByType<MeshToTriangleSplats>(FindObjectsSortMode.None);
+    foreach (var b in triBakers)
+    {
+        if (b != null && b.targetRenderer == this)
+        {
+            b.BakeToRenderer();
+            count++;
+        }
+    }
+
+    Debug.Log($"[GaussianSplatRenderer] F9 bake: {count} baker(s) updated for '{name}'.");
+}
+#endif
+
+
 
     void DebugLogAnchors()
     {
