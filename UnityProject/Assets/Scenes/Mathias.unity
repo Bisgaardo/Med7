@@ -148,15 +148,22 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 11111111111111111111111111111111, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GaussianSplatRenderer
-  MaxSplats: 5000
+  MaxSplats: 10000
   ShowIDMask: 1
-  MinPixels: 1
+  MinPixels: 0
+  AutoSize: 0
+  TargetPixelRadius: 2
+  GlobalSizeScale: 1
   projectCS: {fileID: 7200000, guid: 44444444444444444444444444444444, type: 3}
   billboardShader: {fileID: 4800000, guid: 55555555555555555555555555555555, type: 3}
   idShader: {fileID: 4800000, guid: 50e8ef760bab94e47907ef5185c5294b, type: 3}
   debugHugeBounds: 0
   forceRedIDs: 0
   overlayIDToScreen: 0
+  generateDemoCloudOnEnable: 0
+  debugDrawAnchors: 1
+  debugAnchorCount: 32
+  debugAnchorSize: 0.02
 --- !u!4 &440382186
 Transform:
   m_ObjectHideFlags: 0
@@ -184,6 +191,7 @@ GameObject:
   - component: {fileID: 1249180091}
   - component: {fileID: 1249180090}
   - component: {fileID: 1249180093}
+  - component: {fileID: 1249180094}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -259,7 +267,7 @@ Transform:
   m_GameObject: {fileID: 1249180089}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -10}
+  m_LocalPosition: {x: 0, y: 0, z: -3}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -309,6 +317,27 @@ MonoBehaviour:
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
   m_Version: 2
+--- !u!114 &1249180094
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1249180089}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5917de98fde407248af6fa3a9d765253, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SimpleFlyCamera
+  moveSpeed: 5
+  fastMultiplier: 4
+  slowMultiplier: 0.25
+  scrollStep: 1
+  lookSensitivity: 0.2
+  pitchMin: -89
+  pitchMax: 89
+  moveDamping: 12
+  lookDamping: 20
 --- !u!1 &1874215065
 GameObject:
   m_ObjectHideFlags: 0
@@ -338,12 +367,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 22222222222222222222222222222222, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SplatSegmentationDemo
-  renderer: {fileID: 440382185}
+  splatRenderer: {fileID: 440382185}
   pickRTSize: 512
   accumulateSelection: 0
-  showIDPreview: 1
+  showIDPreview: 0
   debugFillIdRT: 0
-  dimWhileDragging: 1
   focusLock: 0
 --- !u!4 &1874215067
 Transform:
@@ -372,6 +400,7 @@ GameObject:
   - component: {fileID: 2009766868}
   - component: {fileID: 2009766867}
   - component: {fileID: 2009766866}
+  - component: {fileID: 2009766870}
   m_Layer: 0
   m_Name: Cube
   m_TagString: Untagged
@@ -465,12 +494,34 @@ Transform:
   m_GameObject: {fileID: 2009766865}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -6.54308, y: 2.22973, z: 5.50962}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2009766870
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2009766865}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: edc05fa687d823c4a9e5f360339f063b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MeshToGaussianSplats
+  meshFilter: {fileID: 2009766868}
+  skinned: {fileID: 0}
+  targetCount: 10000
+  splatsPerSquareMeter: 2000
+  sigmaTangent: 0.01
+  sigmaNormal: 0.03
+  preferVertexColor: 1
+  sampleTexture: 1
+  fallbackColor: {r: 1, g: 1, b: 1, a: 1}
+  targetRenderer: {fileID: 440382185}
 --- !u!1 &2117640988
 GameObject:
   m_ObjectHideFlags: 0
