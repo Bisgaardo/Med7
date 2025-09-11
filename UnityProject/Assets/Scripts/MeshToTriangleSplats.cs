@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using UnityEngine;   
+using UnityEngine;
 
 public class MeshToTriangleSplats : MonoBehaviour
 {
@@ -9,71 +9,104 @@ public class MeshToTriangleSplats : MonoBehaviour
     public void BakeToRenderer()
     {
         MeshFilter mf = GetComponent<MeshFilter>();
-        if (!mf || !mf.sharedMesh)
+        MeshRenderer mr = GetComponent<MeshRenderer>();
+
+        if (!mf || !mf.sharedMesh || !mr)
         {
-            Debug.LogError("MeshToTriangleSplats: No MeshFilter/Mesh found.");
+            Debug.LogError("MeshToTriangleSplats: Missing MeshFilter or MeshRenderer.");
             return;
         }
 
         Mesh mesh = mf.sharedMesh;
-        var tris = mesh.triangles;
-        var verts = mesh.vertices;
-        var colors = mesh.colors;
-        var uvs = new System.Collections.Generic.List<Vector2>(); 
-        mesh.GetUVs(0, uvs);
+        var mats = mr.sharedMaterials;
+        int[] tris = mesh.triangles;
+        Vector3[] verts = mesh.vertices;
+        Color[] colors = mesh.colors;
+        Vector2[] uvs = mesh.uv;
 
         var list = new List<TriSplat>(tris.Length / 3);
+
+        // Loop through all triangles
         for (int i = 0; i < tris.Length; i += 3)
         {
-            TriSplat s = new TriSplat();
-            s.v0 = transform.TransformPoint(verts[tris[i]]);
-            s.v1 = transform.TransformPoint(verts[tris[i + 1]]);
-            s.v2 = transform.TransformPoint(verts[tris[i + 2]]);
+            int subMeshIndex = FindSubmeshForTriangle(mesh, i); // helper below
 
-            if (uvs != null && uvs.Count == verts.Length)
+            // Detect if this triangle belongs to a leaf material
+            bool isLeaf = false;
+            Texture2D tex = null;
+
+            if (mats != null && subMeshIndex < mats.Length)
             {
-                s.uv0 = uvs[tris[i]];
-                s.uv1 = uvs[tris[i + 1]];
-                s.uv2 = uvs[tris[i + 2]];
+                var mat = mats[subMeshIndex];
+                if (mat != null)
+                {
+                    if (mat.mainTexture is Texture2D t) tex = t;
+                    if (mat.IsKeywordEnabled("_ALPHATEST_ON") || mat.name.ToLower().Contains("leaf"))
+                        isLeaf = true;
+                }
             }
-else
+for (int submesh = 0; submesh < mesh.subMeshCount; submesh++)
 {
-    s.uv0 = s.uv1 = s.uv2 = Vector2.zero;
+    var indices = mesh.GetTriangles(submesh);
+    for (int t = 0; t < indices.Length; t += 3)   // 🔑 use t, not i
+    {
+        TriSplat s = new TriSplat();
+        s.v0 = transform.TransformPoint(verts[indices[t]]);
+        s.v1 = transform.TransformPoint(verts[indices[t + 1]]);
+        s.v2 = transform.TransformPoint(verts[indices[t + 2]]);
+
+        s.uv0 = uvs[indices[t]];
+        s.uv1 = uvs[indices[t + 1]];
+        s.uv2 = uvs[indices[t + 2]];
+
+        s.col0 = s.col1 = s.col2 = new Vector4(1, 1, 1, 1);
+
+        s.matID = submesh; // 🔑 material index
+
+        list.Add(s);
+    }
 }
 
-            if (colors != null && colors.Length == verts.Length)
-            {
-                s.col0 = colors[tris[i]];
-                s.col1 = colors[tris[i + 1]];
-                s.col2 = colors[tris[i + 2]];
-            }
-            else
-            {
-                s.col0 = s.col1 = s.col2 = new Vector4(1, 1, 1, 1);
-            }
 
-            list.Add(s);
+
+            // For leaves: assign texture once
+            if (isLeaf && tex != null && targetRenderer != null && targetRenderer.triSplatMat != null)
+            {
+                targetRenderer.triSplatMat.SetTexture("_BaseMap", tex);
+                targetRenderer.triSplatMat.SetInt("_HasTex", 1);
+            }
         }
 
-var mr = GetComponent<MeshRenderer>();
-if (mr && mr.sharedMaterial)
-{
-    Texture leafTex = null;
-
-    // Try URP's BaseMap first, then legacy mainTexture
-    if (mr.sharedMaterial.HasProperty("_BaseMap"))
-        leafTex = mr.sharedMaterial.GetTexture("_BaseMap");
-    if (leafTex == null)
-        leafTex = mr.sharedMaterial.mainTexture;
-
-    if (leafTex != null)
-        targetRenderer.SetTriangleTexture(leafTex, 0.3f); // tweak cutoff later if needed
-}
+        // If no leaf textures found, fallback to color-only mode
+        if (targetRenderer != null && targetRenderer.triSplatMat != null)
+        {
+            if (!targetRenderer.triSplatMat.HasProperty("_HasTex"))
+            {
+                targetRenderer.triSplatMat.SetInt("_HasTex", 0);
+            }
+        }
 
         targetRenderer.LoadTriSplatsFromList(list);
         Debug.Log($"[GS] Baked {list.Count} triangle splats.");
     }
 
-
-
+    // Helper to figure out which submesh a triangle belongs to
+    int FindSubmeshForTriangle(Mesh mesh, int triIndex)
+    {
+        int t = triIndex;
+        for (int sub = 0; sub < mesh.subMeshCount; sub++)
+        {
+            int[] subTris = mesh.GetTriangles(sub);
+            for (int i = 0; i < subTris.Length; i += 3)
+            {
+                if (subTris[i] == mesh.triangles[t] &&
+                    subTris[i + 1] == mesh.triangles[t + 1] &&
+                    subTris[i + 2] == mesh.triangles[t + 2])
+                {
+                    return sub;
+                }
+            }
+        }
+        return 0; // default to first if not found
+    }
 }

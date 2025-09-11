@@ -33,7 +33,7 @@ public class GaussianSplatRenderer : MonoBehaviour
     public enum RenderMode { Points, Triangles }
     [Header("Render Mode")]
     public RenderMode renderMode = RenderMode.Triangles;
-
+    [SerializeField] public Material triSplatMat;
     [Header("Debug")]
     public bool debugHugeBounds   = true;    // draw with gigantic bounds (skip occlusion)
     public bool forceRedIDs       = false;   // tell ID shader to output solid red (prove write)
@@ -207,7 +207,7 @@ void OnValidate()
     }
 
 ComputeBuffer triSplatBuffer;
-Material triSplatMat;
+
 
 
 public void LoadTriSplatsFromList(List<TriSplat> list)
@@ -239,6 +239,34 @@ public void LoadTriSplatsFromList(List<TriSplat> list)
         triMat.SetBuffer("_TriSplatData", splatBuffer);
 
     Debug.Log($"[GS] Loaded {count} triangle splats into renderer (stride={stride}).");
+
+    // Collect textures from the MeshRenderer’s materials
+var mr = GetComponent<MeshRenderer>();
+if (mr != null)
+{
+    var mats = mr.sharedMaterials;
+    if (mats != null && mats.Length > 0)
+    {
+        List<Texture2D> texList = new List<Texture2D>();
+        foreach (var m in mats)
+        {
+            if (m != null && m.mainTexture is Texture2D t)
+                texList.Add(t);
+            else
+                texList.Add(Texture2D.whiteTexture); // fallback
+        }
+
+        // Build texture array
+        int size = texList[0].width;
+        Texture2DArray texArray = new Texture2DArray(size, size, texList.Count, texList[0].format, true);
+        for (int i = 0; i < texList.Count; i++)
+            Graphics.CopyTexture(texList[i], 0, 0, texArray, i, 0);
+
+        if (triMat != null)
+            triMat.SetTexture("_BaseMaps", texArray);
+    }
+}
+
 }
 
 
