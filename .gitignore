@@ -8,6 +8,11 @@
 # Ignore the whole Temp folder
 [Tt]emp/
 
+# Ignore UserSettings folder (Unity user-specific settings)
+**/UserSettings/
+UnityProject/UserSettings/
+UserSettings/
+
 # Ignore build artifacts
 [Bb]uild/
 [Bb]uilds/
