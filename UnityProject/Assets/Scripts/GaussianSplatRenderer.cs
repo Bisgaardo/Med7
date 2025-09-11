@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.Rendering;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
@@ -27,7 +28,7 @@ public class GaussianSplatRenderer : MonoBehaviour
     public ComputeShader  projectCS;          // Assets/Shaders/SplatProject.compute
     public Shader         billboardShader;   // Custom/SplatBillboard* (color pass)
     public Shader         idShader;          // Custom/SplatBillboardID (ID pass) — optional
-    public Shader         triSplatShader;
+    [SerializeField] Shader triSplatShader;
 
     public enum RenderMode { Points, Triangles }
     [Header("Render Mode")]
@@ -74,7 +75,7 @@ public class GaussianSplatRenderer : MonoBehaviour
 
     [Header("Shaders")]
     Material triMat;
-
+    ComputeBuffer triBuffer;
 
 
 // [ADD] Rebuild materials if the assigned shader changed (or if mats are null)
@@ -208,30 +209,39 @@ void OnValidate()
 ComputeBuffer triSplatBuffer;
 Material triSplatMat;
 
+
 public void LoadTriSplatsFromList(List<TriSplat> list)
 {
     generateDemoCloudOnEnable = false;
 
-    int count = (list != null) ? list.Count : 0;
-    MaxSplats = Mathf.Max(1, count);
-
-    // release old buffer
+    // Release old buffer used for points/triangles
     splatBuffer?.Release();
+    splatBuffer = null;
 
-    // Each TriSplat = 3*float3 (36 bytes) + 3*float4 (48 bytes) = 84 bytes
-    int stride = (3 * 3 * sizeof(float)) + (3 * 4 * sizeof(float)); 
-    splatBuffer = new ComputeBuffer(MaxSplats, stride);
-    if (count > 0)
-        splatBuffer.SetData(list);
+    int count = (list != null) ? list.Count : 0;
+    if (count == 0)
+    {
+        Debug.LogWarning("[GS] No triangle splats provided.");
+        return;
+    }
 
+    // TriSplat = v(36) + uv(24) + col(48) = 108 bytes (must match shader layout)
+    const int stride = 108;
+    splatBuffer = new ComputeBuffer(count, stride);
+    splatBuffer.SetData(list);
+
+    // Lazy-create triangle material
     if (triMat == null && triSplatShader != null)
         triMat = new Material(triSplatShader) { hideFlags = HideFlags.HideAndDontSave };
 
+    // Bind buffer to triangle shader
     if (triMat != null)
         triMat.SetBuffer("_TriSplatData", splatBuffer);
 
-    Debug.Log($"[GS] Loaded {count} triangle splats into renderer.");
+    Debug.Log($"[GS] Loaded {count} triangle splats into renderer (stride={stride}).");
 }
+
+
 
 
 public void LoadSplatsFromList(List<MeshToGaussianSplats.Splat> list)
@@ -254,18 +264,39 @@ public void LoadSplatsFromList(List<MeshToGaussianSplats.Splat> list)
 }
 
 
+
 public void DrawTriangles(Camera cam)
 {
     if (splatBuffer == null || triMat == null) return;
 
-    var bounds = new Bounds(Vector3.zero, Vector3.one * 10000f);
-
-    // Draw N triangles (3 verts each)
-    Graphics.DrawProcedural(
-        triMat, bounds, MeshTopology.Triangles, 3, MaxSplats
-    );
+    // Bind (redundant but safe) and draw now, inside the render loop
+    triMat.SetBuffer("_TriSplatData", splatBuffer);
+    triMat.SetPass(0);
+    Graphics.DrawProceduralNow(MeshTopology.Triangles, 3, splatBuffer.count);
 }
 
+// [ADD new method anywhere in the class]
+void OnRenderObject()
+{
+    // Only draw triangles in the actual render event
+    if (renderMode == RenderMode.Triangles)
+    {
+        var camNow = Camera.current != null ? Camera.current : Camera.main;
+        if (camNow != null) DrawTriangles(camNow);
+    }
+}
+
+
+
+
+
+public void SetTriangleTexture(Texture tex, float alphaCutoff = 0.3f)
+{
+    if (tex == null || triMat == null) return;
+    triMat.SetTexture("_BaseMap", tex);
+    triMat.SetInt("_HasTex", 1);
+    triMat.SetFloat("_AlphaCutoff", alphaCutoff);
+}
 
 
     void EnsureVisibleBufferCapacity(int needed)
@@ -424,22 +455,28 @@ EnsureMaterials();
         billboardMat.SetFloat("_DimOthers",   Mathf.Clamp01(dimOthers));
     }
 
+
 void Update()
 {
     var camNow = Camera.main;
     if (camNow == null) return;
 
-    switch (renderMode)
+    if (renderMode == RenderMode.Triangles)
     {
-        case RenderMode.Points:
-            DrawColor(camNow);      // Gaussian discs
-            break;
-
-        case RenderMode.Triangles:
-            DrawTriangles(camNow);  // Triangle splats
-            break;
+        // draw triangle splats (do NOT gate on splatBuffer)
+        if (triBuffer == null || triMat == null) return;
+        // optional: quick proof of life
+        // Debug.Log($"[GS] DrawTriangles: instances={triBuffer.count}, mat={(triMat.shader ? triMat.shader.name : "null")}");
+        DrawTriangles(camNow);
+    }
+    else // RenderMode.Points
+    {
+        // the billboard path still uses splatBuffer
+        if (!generateDemoCloudOnEnable && splatBuffer == null) return;
+        DrawColor(camNow);
     }
 }
+
 
 
     public void Render(Camera cam) => DrawColor(cam);

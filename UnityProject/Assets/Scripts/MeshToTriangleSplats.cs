@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using UnityEngine;   // <-- Needed for MonoBehaviour, ContextMenu, etc.
+using UnityEngine;   
 
 public class MeshToTriangleSplats : MonoBehaviour
 {
@@ -19,6 +19,8 @@ public class MeshToTriangleSplats : MonoBehaviour
         var tris = mesh.triangles;
         var verts = mesh.vertices;
         var colors = mesh.colors;
+        var uvs = new System.Collections.Generic.List<Vector2>(); 
+        mesh.GetUVs(0, uvs);
 
         var list = new List<TriSplat>(tris.Length / 3);
         for (int i = 0; i < tris.Length; i += 3)
@@ -27,6 +29,17 @@ public class MeshToTriangleSplats : MonoBehaviour
             s.v0 = transform.TransformPoint(verts[tris[i]]);
             s.v1 = transform.TransformPoint(verts[tris[i + 1]]);
             s.v2 = transform.TransformPoint(verts[tris[i + 2]]);
+
+            if (uvs != null && uvs.Count == verts.Length)
+            {
+                s.uv0 = uvs[tris[i]];
+                s.uv1 = uvs[tris[i + 1]];
+                s.uv2 = uvs[tris[i + 2]];
+            }
+else
+{
+    s.uv0 = s.uv1 = s.uv2 = Vector2.zero;
+}
 
             if (colors != null && colors.Length == verts.Length)
             {
@@ -41,6 +54,21 @@ public class MeshToTriangleSplats : MonoBehaviour
 
             list.Add(s);
         }
+
+var mr = GetComponent<MeshRenderer>();
+if (mr && mr.sharedMaterial)
+{
+    Texture leafTex = null;
+
+    // Try URP's BaseMap first, then legacy mainTexture
+    if (mr.sharedMaterial.HasProperty("_BaseMap"))
+        leafTex = mr.sharedMaterial.GetTexture("_BaseMap");
+    if (leafTex == null)
+        leafTex = mr.sharedMaterial.mainTexture;
+
+    if (leafTex != null)
+        targetRenderer.SetTriangleTexture(leafTex, 0.3f); // tweak cutoff later if needed
+}
 
         targetRenderer.LoadTriSplatsFromList(list);
         Debug.Log($"[GS] Baked {list.Count} triangle splats.");
