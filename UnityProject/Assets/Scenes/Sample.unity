@@ -1,0 +1,13 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &1
+GameObject:
+  m_ObjectHideFlags: 0
+  m_Name: _Placeholder
+  m_Active: 1
+  m_Component: []
+  m_Layer: 0
+  m_TagString: Untagged
+  m_IsStatic: 0
+  m_IsActive: 1
+# TODO: Add camera and components in Unity editor.
