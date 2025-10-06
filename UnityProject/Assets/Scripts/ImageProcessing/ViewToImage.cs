@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using UnityEngine;
 using File = UnityEngine.Windows.File;
@@ -10,6 +11,8 @@ public class ViewToImage : MonoBehaviour
     [SerializeField] private int width = 1920;
     [SerializeField] private int height = 1080;
     [SerializeField] private string path = "C:/Users/byacr/Pictures";
+    private float startTime;
+    private float endTime;
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
@@ -19,9 +22,18 @@ public class ViewToImage : MonoBehaviour
     void Update()
     {
         _camera.transform.position = new Vector3(Camera.main.transform.position.x, Camera.main.transform.position.y, Camera.main.transform.position.z);
-        if (Input.GetKeyDown(KeyCode.F9))
+        if (Input.GetKeyDown(KeyCode.Space))
         {
+            Stopwatch stopwatch = new Stopwatch();
+            stopwatch.Start();
             CameraViewToImage();
+            stopwatch.Stop();
+            print($"Screenshot took: {stopwatch.ElapsedMilliseconds} ms");
+            stopwatch.Reset();
+            stopwatch.Start();
+            ImageProcessing.MatFilter(CameraViewImage);
+            stopwatch.Stop();
+            print($"Processing took: {stopwatch.ElapsedMilliseconds} ms");
         }
     }
 
@@ -46,7 +58,7 @@ public class ViewToImage : MonoBehaviour
         Destroy(rt);
         
         byte[] bytes = CameraViewImage.EncodeToPNG();
-        path = Path.Combine(path, "CameraView.png");
-        File.WriteAllBytes(path, bytes);
+        string newPath = Path.Combine(path, "CameraView.png");
+        File.WriteAllBytes(newPath, bytes);
     }
 }
