@@ -1,17 +1,17 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 public class ObjectSpawner : MonoBehaviour
 {
     [Header("References")]
-    public ClickTestManager testManager;     // Drag your TestManager here
-    public GameObject[] prefabOptions;       // Circle, Square, Capsule prefabs
-    public Transform workbenchSurface;       // Optional: the parent or reference for positioning
+    public ClickTestManager testManager;        // Drag your TestManager here
+    public GameObject[] prefabOptions;          // Prefabs (Circle, Square, Capsule)
+    public Transform[] shelfSpawnPoints;        // 🟢 Add 3 shelf spawn transforms here
 
     [Header("Spawn Settings")]
     public int totalObjects = 50;
-    public float spacing = 0.25f;            // Distance between each object
-    public int columns = 10;                 // Controls grid layout
+    public float scatterRadius = 0.25f;         // How much random spread around each shelf
+    public bool randomizeShelf = true;          // Randomly choose shelf per object
 
     private List<ClickableObject> spawnedObjects = new List<ClickableObject>();
 
@@ -19,7 +19,13 @@ public class ObjectSpawner : MonoBehaviour
     {
         if (prefabOptions == null || prefabOptions.Length == 0)
         {
-            Debug.LogError("No prefabs assigned to ObjectSpawner!");
+            Debug.LogError("❌ No prefabs assigned to ObjectSpawner!");
+            return;
+        }
+
+        if (shelfSpawnPoints == null || shelfSpawnPoints.Length == 0)
+        {
+            Debug.LogError("❌ No shelf spawn points assigned!");
             return;
         }
 
@@ -29,26 +35,27 @@ public class ObjectSpawner : MonoBehaviour
 
     void SpawnObjects()
     {
-        // Start position centered on workbench or world origin
-        Vector3 startPos = (workbenchSurface != null)
-            ? workbenchSurface.position + Vector3.up * 0.05f // slightly above surface
-            : Vector3.zero;
-
-        int rows = Mathf.CeilToInt(totalObjects / (float)columns);
+        // optional: fixed random seed for reproducibility
+        Random.InitState(42);
 
         for (int i = 0; i < totalObjects; i++)
         {
-            // Choose prefab (cyclic or random)
+            // Choose prefab
             GameObject prefab = prefabOptions[i % prefabOptions.Length];
 
-            int x = i % columns;
-            int z = i / columns;
+            // Choose which shelf to spawn on
+            Transform chosenShelf = randomizeShelf
+                ? shelfSpawnPoints[Random.Range(0, shelfSpawnPoints.Length)]
+                : shelfSpawnPoints[i % shelfSpawnPoints.Length];
 
-            Vector3 offset = new Vector3(x * spacing, 0, z * spacing);
-            Vector3 spawnPos = startPos + offset;
+            // Scatter around that shelf point
+            Vector2 randCircle = Random.insideUnitCircle * scatterRadius;
+            Vector3 spawnPos = chosenShelf.position + new Vector3(randCircle.x, 0f, randCircle.y);
 
+            // Instantiate object
             GameObject obj = Instantiate(prefab, spawnPos, Quaternion.identity);
             obj.name = $"Target_{i + 1:D2}";
+            obj.transform.SetParent(chosenShelf); // keep organized
 
             var clickObj = obj.GetComponent<ClickableObject>();
             if (clickObj != null)
@@ -58,23 +65,23 @@ public class ObjectSpawner : MonoBehaviour
                 spawnedObjects.Add(clickObj);
             }
         }
+
+        Debug.Log($"✅ Spawned {spawnedObjects.Count} clickable objects across {shelfSpawnPoints.Length} shelves.");
     }
 
     void AssignToManager()
     {
         if (testManager == null)
-        {
             testManager = FindObjectOfType<ClickTestManager>();
-        }
 
         if (testManager != null)
         {
             testManager.clickableObjects = spawnedObjects;
-            Debug.Log($"Assigned {spawnedObjects.Count} objects to TestManager in fixed order.");
+            Debug.Log($"✅ Assigned {spawnedObjects.Count} objects to TestManager.");
         }
         else
         {
-            Debug.LogError("No ClickTestManager found in scene!");
+            Debug.LogError("❌ No ClickTestManager found in scene!");
         }
     }
 }
