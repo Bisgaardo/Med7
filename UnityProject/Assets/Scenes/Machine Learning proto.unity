@@ -225,8 +225,8 @@ Transform:
   m_GameObject: {fileID: 340863590}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: -0.32, y: 0, z: 0}
+  m_LocalScale: {x: 2, y: 2, z: 2}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -236,7 +236,7 @@ GameObject:
   m_CorrespondingSourceObject: {fileID: 8767652916548122359, guid: 107cf69df2559cb47bafd2c883c8da2d, type: 3}
   m_PrefabInstance: {fileID: 1655393188323391321}
   m_PrefabAsset: {fileID: 0}
---- !u!114 &474243412
+--- !u!114 &474243417
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -245,9 +245,66 @@ MonoBehaviour:
   m_GameObject: {fileID: 474243405}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1d64cdb933c01ec4a81fe2664eaca1c5, type: 3}
+  m_Script: {fileID: 11500000, guid: 88c4482e19022ca44800df66b91a91d2, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ClickChangeColor
+  m_EditorClassIdentifier: Assembly-CSharp::ClickableObject
+  objectID: 
+  shapeType: 
+  highlightColor: {r: 1, g: 0, b: 0, a: 1}
+  isActive: 0
+--- !u!1 &501304412
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 501304414}
+  - component: {fileID: 501304413}
+  m_Layer: 0
+  m_Name: ObjectSpawner
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &501304413
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 501304412}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d886854ebdbea3d48ab0be1acf5f6637, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ObjectSpawner
+  testManager: {fileID: 1275109546}
+  prefabOptions:
+  - {fileID: 1946431941}
+  - {fileID: 1442048839}
+  - {fileID: 474243405}
+  workbenchSurface: {fileID: 340863594}
+  totalObjects: 50
+  spacing: 5
+  columns: 10
+--- !u!4 &501304414
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 501304412}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -0.36173, y: 0, z: -0.56075}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &688676143
 GameObject:
   m_ObjectHideFlags: 0
@@ -259,6 +316,7 @@ GameObject:
   - component: {fileID: 688676146}
   - component: {fileID: 688676145}
   - component: {fileID: 688676144}
+  - component: {fileID: 688676147}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -334,12 +392,56 @@ Transform:
   m_GameObject: {fileID: 688676143}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalPosition: {x: 0.8, y: 4.77, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &688676147
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 688676143}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalCameraData
+  m_RenderShadows: 1
+  m_RequiresDepthTextureOption: 2
+  m_RequiresOpaqueTextureOption: 2
+  m_CameraType: 0
+  m_Cameras: []
+  m_RendererIndex: -1
+  m_VolumeLayerMask:
+    serializedVersion: 2
+    m_Bits: 1
+  m_VolumeTrigger: {fileID: 0}
+  m_VolumeFrameworkUpdateModeOption: 2
+  m_RenderPostProcessing: 0
+  m_Antialiasing: 0
+  m_AntialiasingQuality: 2
+  m_StopNaN: 0
+  m_Dithering: 0
+  m_ClearDepth: 1
+  m_AllowXRRendering: 1
+  m_AllowHDROutput: 1
+  m_UseScreenCoordOverride: 0
+  m_ScreenSizeOverride: {x: 0, y: 0, z: 0, w: 0}
+  m_ScreenCoordScaleBias: {x: 0, y: 0, z: 0, w: 0}
+  m_RequiresDepthTexture: 0
+  m_RequiresColorTexture: 0
+  m_TaaSettings:
+    m_Quality: 3
+    m_FrameInfluence: 0.1
+    m_JitterScale: 1
+    m_MipBias: 0
+    m_VarianceClampScale: 0.9
+    m_ContrastAdaptiveSharpening: 0
+  m_Version: 2
 --- !u!1 &1091283678
 GameObject:
   m_ObjectHideFlags: 0
@@ -508,15 +610,22 @@ MonoBehaviour:
   m_GameObject: {fileID: 1275109543}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fcca0fbfed01dc34391958aeac012fa1, type: 3}
+  m_Script: {fileID: 11500000, guid: 2573cdd5258f21e42a5e0e8321098565, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ClickManager
+  m_EditorClassIdentifier: Assembly-CSharp::ClickTestManager
+  mainCamera: {fileID: 688676145}
+  clickableLayer:
+    serializedVersion: 2
+    m_Bits: 8
+  clickableObjects: []
+  clickTimeLimitSeconds: 3
+  despawnAfterClick: 1
 --- !u!1 &1442048839 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 498618930684486417, guid: d5a9e7ee3d167c8488fa7d73d19d824f, type: 3}
   m_PrefabInstance: {fileID: 4148426150086254108}
   m_PrefabAsset: {fileID: 0}
---- !u!114 &1442048846
+--- !u!114 &1442048851
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -525,15 +634,19 @@ MonoBehaviour:
   m_GameObject: {fileID: 1442048839}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1d64cdb933c01ec4a81fe2664eaca1c5, type: 3}
+  m_Script: {fileID: 11500000, guid: 88c4482e19022ca44800df66b91a91d2, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ClickChangeColor
+  m_EditorClassIdentifier: Assembly-CSharp::ClickableObject
+  objectID: 
+  shapeType: 
+  highlightColor: {r: 1, g: 0, b: 0, a: 1}
+  isActive: 0
 --- !u!1 &1946431941 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 3228271132344437001, guid: e231235462a1d6c48ae40ea41537b47e, type: 3}
   m_PrefabInstance: {fileID: 8250435835809023818}
   m_PrefabAsset: {fileID: 0}
---- !u!114 &1946431948
+--- !u!114 &1946431953
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -542,9 +655,13 @@ MonoBehaviour:
   m_GameObject: {fileID: 1946431941}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1d64cdb933c01ec4a81fe2664eaca1c5, type: 3}
+  m_Script: {fileID: 11500000, guid: 88c4482e19022ca44800df66b91a91d2, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ClickChangeColor
+  m_EditorClassIdentifier: Assembly-CSharp::ClickableObject
+  objectID: 
+  shapeType: 
+  highlightColor: {r: 1, g: 0, b: 0, a: 1}
+  isActive: 0
 --- !u!1001 &1655393188323391321
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -597,6 +714,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Capsule
       objectReference: {fileID: 0}
+    - target: {fileID: 8767652916548122359, guid: 107cf69df2559cb47bafd2c883c8da2d, type: 3}
+      propertyPath: m_Layer
+      value: 3
+      objectReference: {fileID: 0}
     - target: {fileID: 9189485060246523324, guid: 107cf69df2559cb47bafd2c883c8da2d, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -609,7 +730,7 @@ PrefabInstance:
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 8767652916548122359, guid: 107cf69df2559cb47bafd2c883c8da2d, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 474243412}
+      addedObject: {fileID: 474243417}
   m_SourcePrefab: {fileID: 100100000, guid: 107cf69df2559cb47bafd2c883c8da2d, type: 3}
 --- !u!1001 &4148426150086254108
 PrefabInstance:
@@ -622,6 +743,10 @@ PrefabInstance:
     - target: {fileID: 498618930684486417, guid: d5a9e7ee3d167c8488fa7d73d19d824f, type: 3}
       propertyPath: m_Name
       value: Sphere
+      objectReference: {fileID: 0}
+    - target: {fileID: 498618930684486417, guid: d5a9e7ee3d167c8488fa7d73d19d824f, type: 3}
+      propertyPath: m_Layer
+      value: 3
       objectReference: {fileID: 0}
     - target: {fileID: 4169704640276600990, guid: d5a9e7ee3d167c8488fa7d73d19d824f, type: 3}
       propertyPath: m_LocalPosition.x
@@ -675,7 +800,7 @@ PrefabInstance:
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 498618930684486417, guid: d5a9e7ee3d167c8488fa7d73d19d824f, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 1442048846}
+      addedObject: {fileID: 1442048851}
   m_SourcePrefab: {fileID: 100100000, guid: d5a9e7ee3d167c8488fa7d73d19d824f, type: 3}
 --- !u!1001 &8250435835809023818
 PrefabInstance:
@@ -729,6 +854,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Cube
       objectReference: {fileID: 0}
+    - target: {fileID: 3228271132344437001, guid: e231235462a1d6c48ae40ea41537b47e, type: 3}
+      propertyPath: m_Layer
+      value: 3
+      objectReference: {fileID: 0}
     - target: {fileID: 5451324749111382046, guid: e231235462a1d6c48ae40ea41537b47e, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -741,13 +870,14 @@ PrefabInstance:
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 3228271132344437001, guid: e231235462a1d6c48ae40ea41537b47e, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 1946431948}
+      addedObject: {fileID: 1946431953}
   m_SourcePrefab: {fileID: 100100000, guid: e231235462a1d6c48ae40ea41537b47e, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 1275109545}
+  - {fileID: 501304414}
   - {fileID: 688676146}
   - {fileID: 1091283680}
   - {fileID: 340863594}
