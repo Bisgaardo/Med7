@@ -10,7 +10,7 @@ public class ViewToImage : MonoBehaviour
     public Texture2D CameraViewImage;
     [SerializeField] private int width = 1920;
     [SerializeField] private int height = 1080;
-    [SerializeField] private string path = "C:/Users/byacr/Pictures";
+    [SerializeField] private string path = "C:/Users/katri/Pictures/Work";
     private float startTime;
     private float endTime;
     // Start is called once before the first execution of Update after the MonoBehaviour is created
@@ -26,12 +26,22 @@ public class ViewToImage : MonoBehaviour
         {
             Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
+
+
+            // Convert to Texture2D and PNG
             CameraViewToImage();
+
+
             stopwatch.Stop();
             print($"Screenshot took: {stopwatch.ElapsedMilliseconds} ms");
             stopwatch.Reset();
             stopwatch.Start();
-            ImageProcessing.MatFilter(CameraViewImage);
+
+
+            // Image processing function
+            ImageProcessing.CannyMethod(CameraViewImage, path);
+
+
             stopwatch.Stop();
             print($"Processing took: {stopwatch.ElapsedMilliseconds} ms");
         }
@@ -57,6 +67,8 @@ public class ViewToImage : MonoBehaviour
         RenderTexture.active = null;
         Destroy(rt);
         
+
+        // FOR DEBUG - Convert the Texture2D to a PNG with a set path
         byte[] bytes = CameraViewImage.EncodeToPNG();
         string newPath = Path.Combine(path, "CameraView.png");
         File.WriteAllBytes(newPath, bytes);
