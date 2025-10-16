@@ -2,100 +2,116 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using System.Collections.Generic;
 
+class TestData
+{
+    static int nextId = 1;
+    public int testId { get; }
+    public int misses;
+    public float MT;
+    public float ID;
+
+    public TestData(int misses, float MT, float ID)
+    {
+        testId = nextId++;
+        this.misses = misses;
+        this.MT = MT;
+        this.ID = ID;
+    }
+}
+
+struct CurrentlyRunningTest
+{
+    public int targetId;
+    public Vector2 startMousePosition;
+    public float startTime;
+    public int misses;
+    public ClickableObject targetObject;
+}
+
 public class ManagerScript : MonoBehaviour
 {
-    List<int> sequence = new List<int> { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21 };
-    private int currentSequenceIndex = 0;
-    public Vector2 startMousePosition = new Vector2(0, 0);
     [SerializeField] private Camera mainCamera;
+    private List<int> sequence = new()
+{
+    11, 14, 2, 4, 5, 6, 7, 8, 9, 10, 11,
+    12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+};
 
+    int currentSequenceIndex;
+    CurrentlyRunningTest currentTest;
+    readonly List<TestData> results = new();
 
-    private ClickableObject currentHighlightedObject;
     void Start()
     {
-        // If no camera is assigned, try to find the main camera
-        if (mainCamera == null)
-        {
-            mainCamera = Camera.main;
-            if (mainCamera == null)
-            {
-                mainCamera = FindObjectOfType<Camera>();
-            }
-        }
-        Mouse.current.WarpCursorPosition(new Vector2(Screen.width / 2, Screen.height / 2));
+        mainCamera ??= Camera.main ?? FindObjectOfType<Camera>();
+        Mouse.current.WarpCursorPosition(new Vector2(Screen.width / 2f, Screen.height / 2f));
         HighlightNextInSequence();
     }
+
     void Update()
     {
-        if (Mouse.current.leftButton.wasPressedThisFrame) HandleMouseClick();
+        if (Mouse.current.leftButton.wasPressedThisFrame)
+            HandleMouseClick();
     }
-
 
     void HandleMouseClick()
     {
-        Vector2 mousePosition = Mouse.current.position.ReadValue();
-        Ray ray = mainCamera.ScreenPointToRay(mousePosition);
+        if (!Physics.Raycast(mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue()), out RaycastHit hit))
+            return;
 
-        if (!Physics.Raycast(ray, out RaycastHit hit)) return;
-        ClickableObject clickableObj = hit.collider.GetComponent<ClickableObject>();
-
-        if (!clickableObj) return;
-
-        int objectId = clickableObj.objectId;
-        Vector3 screenPosition = clickableObj.GetScreenPosition(mainCamera);
-        float targetDirectionalWidth = clickableObj.GetDirectionalWidth(mainCamera, startMousePosition);
-
-        Debug.Log($"Clicked on object {objectId} | ScreenPos: {screenPosition} | MousePosStart: {startMousePosition} | TargetDirectionalWidth: {targetDirectionalWidth}");
-
-        // Check if this is the correct object in the sequence
-        if (currentSequenceIndex < sequence.Count && objectId == sequence[currentSequenceIndex])
+        if (!hit.collider.TryGetComponent(out ClickableObject clicked))
         {
-            // Move to next in sequence
+            currentTest.misses++;
+            return;
+        }
+
+        int expectedId = sequence[currentSequenceIndex];
+
+        if (clicked.objectId == expectedId)
+        {
+            Vector3 targetPos = clicked.GetScreenPosition(mainCamera);
+            float width = clicked.GetDirectionalWidth(mainCamera, currentTest.startMousePosition);
+            float dist = Vector2.Distance(currentTest.startMousePosition, targetPos);
+
+            Debug.Log($"Clicked {clicked.objectId} | TargetPos: {targetPos} | StartPos: {currentTest.startMousePosition} | Width: {width}");
+
+            var result = new TestData(
+                currentTest.misses,
+                Time.time - currentTest.startTime,
+                Mathf.Log(dist / width + 1f) / Mathf.Log(2f)
+            );
+
+            results.Add(result);
+            Debug.Log($"Test {result.testId} | MT: {result.MT:F3} | ID: {result.ID:F3} | Misses: {result.misses}");
+
+            currentTest.targetObject?.ResetColor();
             currentSequenceIndex++;
-
-            // Reset the color of the previously highlighted object
-            if (currentHighlightedObject != null)
-            {
-                currentHighlightedObject.ResetColor();
-            }
-
-            // Check if sequence is complete
-            if (currentSequenceIndex >= sequence.Count)
-            {
-                Debug.Log("Sequence completed!");
-                // Optionally restart the sequence
-                // RestartSequence();
-            }
-            else
-            {
-                // Highlight the next object in sequence
-                HighlightNextInSequence();
-            }
+            HighlightNextInSequence();
         }
         else
         {
-            Debug.Log($"Wrong object! Expected {sequence[currentSequenceIndex]}, but clicked {objectId}");
+            Debug.Log($"Wrong object! Expected {expectedId}, got {clicked.objectId}");
+            currentTest.misses++;
         }
     }
-
 
     void HighlightNextInSequence()
     {
         if (currentSequenceIndex >= sequence.Count) return;
+        Mouse.current.WarpCursorPosition(new Vector2(Screen.width / 2f, Screen.height / 2f));
 
         int targetId = sequence[currentSequenceIndex];
-        startMousePosition = Mouse.current.position.ReadValue();
-        Debug.Log($"Mouse Pos: {startMousePosition}");
+        currentTest.startMousePosition = new Vector2(Screen.width / 2f, Screen.height / 2f);
+        currentTest.startTime = Time.time;
+        currentTest.misses = 0;
 
-        // Find the object with the target ID
-        ClickableObject[] allClickableObjects = FindObjectsByType<ClickableObject>(FindObjectsSortMode.None);
-
-        foreach (ClickableObject obj in allClickableObjects)
+        foreach (var obj in FindObjectsByType<ClickableObject>(FindObjectsSortMode.None))
         {
             if (obj.objectId == targetId)
             {
                 obj.HighlightObject();
-                currentHighlightedObject = obj;
+                currentTest.targetId = targetId;
+                currentTest.targetObject = obj;
                 break;
             }
         }
