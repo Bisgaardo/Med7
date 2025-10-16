@@ -45,7 +45,7 @@ if %errorlevel%==0 (
 :: Install PyTorch first
 if %CUDA_AVAILABLE%==1 (
     echo Installing CUDA PyTorch...
-    python -m pip install torch==2.9.0+cu126 --index-url https://download.pytorch.org/whl/cu126
+    pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 ) else (
     echo Installing CPU PyTorch from requirements.txt...
     python -m pip install torch
@@ -60,6 +60,6 @@ if exist "%SCRIPT_DIR%requirements.txt" (
 )
 
 echo.
-echo ✅ Setup complete!
+echo Setup complete!
 pause
 endlocal
