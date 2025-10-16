@@ -86,3 +86,4 @@ Logs/
 MemoryCaptures/
 Recordings/
 *.dwlt
+venv/
