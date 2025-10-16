@@ -1,14 +1,17 @@
 @echo off
+setlocal enabledelayedexpansion
 echo ============================
 echo Setting up Python environment
 echo ============================
 
-:: Check if Python is installed
+:: Get the directory of this .bat file
+set SCRIPT_DIR=%~dp0
+cd /d "%SCRIPT_DIR%"
+
+:: Check Python
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo Python is not installed or not on PATH.
-    echo Please install Python 3.10 or newer from https://www.python.org/downloads/
-    echo And make sure to check "Add Python to PATH" during installation.
+    echo [ERROR] Python not found. Install 3.10-3.13 and add to PATH.
     pause
     exit /b
 )
@@ -22,21 +25,41 @@ if not exist "venv" (
 )
 
 :: Activate venv
-echo Activating virtual environment...
 call venv\Scripts\activate
+if errorlevel 1 (
+    echo [ERROR] Failed to activate venv.
+    pause
+    exit /b
+)
 
-:: Upgrade pip (optional but helps)
+:: Upgrade pip
 python -m pip install --upgrade pip
 
-:: Install requirements
-if exist "requirements.txt" (
-    echo Installing dependencies from requirements.txt...
-    python -m pip install -r requirements.txt
+:: Detect CUDA
+set CUDA_AVAILABLE=0
+nvidia-smi >nul 2>&1
+if %errorlevel%==0 (
+    set CUDA_AVAILABLE=1
+)
+
+:: Install PyTorch first
+if %CUDA_AVAILABLE%==1 (
+    echo Installing CUDA PyTorch...
+    python -m pip install torch==2.9.0+cu126 --index-url https://download.pytorch.org/whl/cu126
 ) else (
-    echo  No requirements.txt file found.
+    echo Installing CPU PyTorch from requirements.txt...
+    python -m pip install torch
+)
+
+:: Install remaining requirements
+if exist "%SCRIPT_DIR%requirements.txt" (
+    echo Installing remaining dependencies...
+    python -m pip install -r "%SCRIPT_DIR%requirements.txt"
+) else (
+    echo [WARNING] No requirements.txt found
 )
 
 echo.
-echo Setup complete!
-echo.
+echo ✅ Setup complete!
 pause
+endlocal
