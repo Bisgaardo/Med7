@@ -48,7 +48,7 @@ if %CUDA_AVAILABLE%==1 (
     pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 ) else (
     echo Installing CPU PyTorch from requirements.txt...
-    python -m pip install torch
+    python -m pip install torch torchvision
 )
 
 :: Install remaining requirements

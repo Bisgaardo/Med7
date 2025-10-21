@@ -46,7 +46,6 @@ pyreadline3==3.5.4
 python-dateutil==2.9.0.post0
 pyzmq==27.1.0
 segment_anything @ git+https://github.com/facebookresearch/segment-anything.git@dca509fe793f601edb92606367a655c15ac00fdf
-setuptools==70.2.0
 six==1.17.0
 stack-data==0.6.3
 sympy==1.14.0
