@@ -44,7 +44,6 @@ public class ManagerScript : MonoBehaviour
     void Start()
     {
         mainCamera ??= Camera.main ?? FindObjectOfType<Camera>();
-        Mouse.current.WarpCursorPosition(new Vector2(Screen.width / 2f, Screen.height / 2f));
         HighlightNextInSequence();
     }
 
@@ -57,7 +56,10 @@ public class ManagerScript : MonoBehaviour
     void HandleMouseClick()
     {
         if (!Physics.Raycast(mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue()), out RaycastHit hit))
+        {
+            currentTest.misses++;
             return;
+        }
 
         if (!hit.collider.TryGetComponent(out ClickableObject clicked))
         {
@@ -98,10 +100,9 @@ public class ManagerScript : MonoBehaviour
     void HighlightNextInSequence()
     {
         if (currentSequenceIndex >= sequence.Count) return;
-        Mouse.current.WarpCursorPosition(new Vector2(Screen.width / 2f, Screen.height / 2f));
 
         int targetId = sequence[currentSequenceIndex];
-        currentTest.startMousePosition = new Vector2(Screen.width / 2f, Screen.height / 2f);
+        currentTest.startMousePosition = Mouse.current.position.ReadValue();
         currentTest.startTime = Time.time;
         currentTest.misses = 0;
 
