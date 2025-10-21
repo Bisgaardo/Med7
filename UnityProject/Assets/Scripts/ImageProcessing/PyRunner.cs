@@ -1,27 +1,31 @@
 using System.Diagnostics;
 using System.IO;
 using UnityEngine;
+using UnityEngine.UI;
 using File = UnityEngine.Windows.File;
 public static class PyRunner
 {
+    private static readonly string pythonExePath = @"C:\Users\katri\Documents\GitHub\Med7\venv\Scripts\python.exe";
+    private static Image image;
     // Run Python files inside Unity's assets folder
-    public static void Run(string relativePythonPath)
+    public static Texture2D Run(string relativePythonPath)
     {
         // Creating an absolute path
         string pythonFileFullPath = Path.Combine(Application.dataPath, relativePythonPath);
+        string outputPath = null;
 
         //Check if the python file exists
         if (!File.Exists(pythonFileFullPath))
         {
             UnityEngine.Debug.LogError($"Python file not found: {pythonFileFullPath}");
-            return;
+            return null;
         }
 
         // Setup for running python
         ProcessStartInfo startInfo = new ProcessStartInfo
         {
             // Python version
-            FileName = "python3",
+            FileName = pythonExePath,
 
             // Path for python file
             Arguments = $"\"{pythonFileFullPath}\"",
@@ -61,6 +65,22 @@ public static class PyRunner
             // Log python errors in the Unity console
             if (!string.IsNullOrEmpty(error))
                 UnityEngine.Debug.LogError($"[Python Error]\n{error}");
+
+            // Extract the file path from Python output
+            outputPath = output.Trim();
+        }
+
+        if (!string.IsNullOrEmpty(outputPath) && File.Exists(outputPath))
+        {
+            byte[] bytes = File.ReadAllBytes(outputPath);
+            Texture2D tex = new Texture2D(2, 2);
+            tex.LoadImage(bytes);
+            return tex;
+        }
+        else
+        {
+            UnityEngine.Debug.LogError("Invalid file from python");
+            return null;
         }
     }
 }
