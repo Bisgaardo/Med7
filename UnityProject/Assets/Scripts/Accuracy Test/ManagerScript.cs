@@ -34,7 +34,7 @@ struct CurrentTrial
 public class ManagerScript : MonoBehaviour
 {
     [SerializeField] private Camera mainCamera;
-    [SerializeField] private string serverUrl = "http://localhost:3000/upload";
+    [SerializeField] private string serverUrl = "https://unity.api.runsesmithy.dev/upload";
 
     private readonly List<int> targetSequence = new()
     {
@@ -153,6 +153,19 @@ public class ManagerScript : MonoBehaviour
         if (req.result == UnityWebRequest.Result.Success)
             Debug.Log("Results uploaded successfully");
         else
-            Debug.LogError($"Upload failed: {req.error}");
+        {
+            StringBuilder err = new();
+            err.AppendLine("Upload failed:");
+            err.AppendLine($"• Result: {req.result}");
+            err.AppendLine($"• Response Code: {req.responseCode}");
+            err.AppendLine($"• Error: {req.error}");
+            err.AppendLine($"• URL: {req.url}");
+            err.AppendLine($"• Response Text: {req.downloadHandler?.text}");
+            err.AppendLine($"• Headers:");
+            foreach (var kvp in req.GetResponseHeaders() ?? new Dictionary<string, string>())
+                err.AppendLine($"    {kvp.Key}: {kvp.Value}");
+
+            Debug.LogError(err.ToString());
+        }
     }
 }
