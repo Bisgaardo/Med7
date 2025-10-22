@@ -1,6 +1,10 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Networking;
 using System.Collections.Generic;
+using System.Collections;
+using System.IO;
+using System.Text;
 
 class TestData
 {
@@ -32,10 +36,10 @@ public class ManagerScript : MonoBehaviour
 {
     [SerializeField] private Camera mainCamera;
     private List<int> sequence = new()
-{
-    11, 14, 2, 4, 5, 6, 7, 8, 9, 10, 11,
-    12, 13, 14, 15, 16, 17, 18, 19, 20, 21
-};
+    {
+        0, 14, 2, 4, 5, 6, 7, 8, 9, 10, 11,
+        // 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+    };
 
     int currentSequenceIndex;
     CurrentlyRunningTest currentTest;
@@ -75,8 +79,6 @@ public class ManagerScript : MonoBehaviour
             float width = clicked.GetDirectionalWidth(mainCamera, currentTest.startMousePosition);
             float dist = Vector2.Distance(currentTest.startMousePosition, targetPos);
 
-            Debug.Log($"Clicked {clicked.objectId} | TargetPos: {targetPos} | StartPos: {currentTest.startMousePosition} | Width: {width}");
-
             var result = new TestData(
                 currentTest.misses,
                 Time.time - currentTest.startTime,
@@ -88,11 +90,18 @@ public class ManagerScript : MonoBehaviour
 
             currentTest.targetObject?.ResetColor();
             currentSequenceIndex++;
-            HighlightNextInSequence();
+            if (currentSequenceIndex >= sequence.Count)
+            {
+                StartCoroutine(UploadResults());
+                Debug.Log("All tests complete. Results uploaded.");
+            }
+            else
+            {
+                HighlightNextInSequence();
+            }
         }
         else
         {
-            Debug.Log($"Wrong object! Expected {expectedId}, got {clicked.objectId}");
             currentTest.misses++;
         }
     }
@@ -116,5 +125,35 @@ public class ManagerScript : MonoBehaviour
                 break;
             }
         }
+    }
+
+    IEnumerator UploadResults()
+    {
+        StringBuilder sb = new();
+
+        sb.AppendLine("TestID, Misses, MT, ID");
+
+        foreach (var r in results)
+        {
+            
+            sb.AppendLine($"{r.testId}, {r.misses}, {r.MT:F3}, {r.ID:F3}");
+        }
+
+        byte[] bodyRaw = Encoding.UTF8.GetBytes(sb.ToString());
+        Debug.Log("Uploading Results:\n" + bodyRaw.Length + " bytes");  
+
+        string serverUrl = "http://localhost:3000/upload"; // replace
+
+        using UnityWebRequest req = new(serverUrl, "POST");
+        req.uploadHandler = new UploadHandlerRaw(bodyRaw);
+        req.downloadHandler = new DownloadHandlerBuffer();
+        req.SetRequestHeader("Content-Type", "text/csv");
+
+        yield return req.SendWebRequest();
+
+        if (req.result == UnityWebRequest.Result.Success)
+            Debug.Log("Results uploaded successfully");
+        else
+            Debug.LogError($"Upload failed: {req.error}");
     }
 }
