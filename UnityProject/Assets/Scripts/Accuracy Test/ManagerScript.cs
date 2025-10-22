@@ -3,9 +3,9 @@ using UnityEngine.InputSystem;
 using UnityEngine.Networking;
 using System.Collections.Generic;
 using System.Collections;
-using System.IO;
 using System.Text;
 
+[System.Serializable]
 class TestData
 {
     static int nextId = 1;
@@ -35,15 +35,16 @@ struct CurrentlyRunningTest
 public class ManagerScript : MonoBehaviour
 {
     [SerializeField] private Camera mainCamera;
-    private List<int> sequence = new()
+    [SerializeField] private string serverUrl = "http://localhost:3000/upload";
+
+    private readonly List<int> sequence = new()
     {
-        0, 14, 2, 4, 5, 6, 7, 8, 9, 10, 11,
-        // 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+        0, 14, 2, 4, 5, 6, 7, 8, 9, 10, 11
     };
 
-    int currentSequenceIndex;
-    CurrentlyRunningTest currentTest;
-    readonly List<TestData> results = new();
+    private int currentSequenceIndex;
+    private CurrentlyRunningTest currentTest;
+    private readonly List<TestData> results = new();
 
     void Start()
     {
@@ -73,36 +74,34 @@ public class ManagerScript : MonoBehaviour
 
         int expectedId = sequence[currentSequenceIndex];
 
-        if (clicked.objectId == expectedId)
+        if (clicked.objectId != expectedId)
         {
-            Vector3 targetPos = clicked.GetScreenPosition(mainCamera);
-            float width = clicked.GetDirectionalWidth(mainCamera, currentTest.startMousePosition);
-            float dist = Vector2.Distance(currentTest.startMousePosition, targetPos);
+            currentTest.misses++;
+            return;
+        }
 
-            var result = new TestData(
-                currentTest.misses,
-                Time.time - currentTest.startTime,
-                Mathf.Log(dist / width + 1f) / Mathf.Log(2f)
-            );
+        float movementTime = Time.time - currentTest.startTime;
+        Vector3 targetPos = clicked.GetScreenPosition(mainCamera);
+        float width = clicked.GetDirectionalWidth(mainCamera, currentTest.startMousePosition);
+        float dist = Vector2.Distance(currentTest.startMousePosition, targetPos);
+        float indexDifficulty = Mathf.Log(dist / width + 1f) / Mathf.Log(2f);
 
-            results.Add(result);
-            Debug.Log($"Test {result.testId} | MT: {result.MT:F3} | ID: {result.ID:F3} | Misses: {result.misses}");
+        var result = new TestData(currentTest.misses, movementTime, indexDifficulty);
+        results.Add(result);
 
-            currentTest.targetObject?.ResetColor();
-            currentSequenceIndex++;
-            if (currentSequenceIndex >= sequence.Count)
-            {
-                StartCoroutine(UploadResults());
-                Debug.Log("All tests complete. Results uploaded.");
-            }
-            else
-            {
-                HighlightNextInSequence();
-            }
+        Debug.Log($"Test {result.testId} | MT: {result.MT:F3} | ID: {result.ID:F3} | Misses: {result.misses}");
+
+        currentTest.targetObject?.ResetColor();
+        currentSequenceIndex++;
+
+        if (currentSequenceIndex >= sequence.Count)
+        {
+            StartCoroutine(UploadResults());
+            Debug.Log("All tests complete. Results uploaded.");
         }
         else
         {
-            currentTest.misses++;
+            HighlightNextInSequence();
         }
     }
 
@@ -130,23 +129,19 @@ public class ManagerScript : MonoBehaviour
     IEnumerator UploadResults()
     {
         StringBuilder sb = new();
-
-        sb.AppendLine("TestID, Misses, MT, ID");
+        sb.AppendLine("TestID,Misses,MT,ID");
 
         foreach (var r in results)
-        {
-            
-            sb.AppendLine($"{r.testId}, {r.misses}, {r.MT:F3}, {r.ID:F3}");
-        }
+            sb.AppendLine($"{r.testId},{r.misses},{r.MT:F3},{r.ID:F3}");
 
         byte[] bodyRaw = Encoding.UTF8.GetBytes(sb.ToString());
-        Debug.Log("Uploading Results:\n" + bodyRaw.Length + " bytes");  
+        Debug.Log($"Uploading Results ({bodyRaw.Length} bytes)");
 
-        string serverUrl = "http://localhost:3000/upload"; // replace
-
-        using UnityWebRequest req = new(serverUrl, "POST");
-        req.uploadHandler = new UploadHandlerRaw(bodyRaw);
-        req.downloadHandler = new DownloadHandlerBuffer();
+        using UnityWebRequest req = new(serverUrl, "POST")
+        {
+            uploadHandler = new UploadHandlerRaw(bodyRaw),
+            downloadHandler = new DownloadHandlerBuffer()
+        };
         req.SetRequestHeader("Content-Type", "text/csv");
 
         yield return req.SendWebRequest();
