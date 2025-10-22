@@ -1,10 +1,9 @@
 using System.Diagnostics;
 using System.IO;
-using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.UI;
-using File = UnityEngine.Windows.File;
-using Input = UnityEngine.Input;
+using System.Threading.Tasks;
+
 
 public class ViewToImage : MonoBehaviour
 {
@@ -14,13 +13,16 @@ public class ViewToImage : MonoBehaviour
     [SerializeField] private int height = 1080;
     [SerializeField] private string path = "C:/Users/katri/Pictures/Work";
     [SerializeField] private RawImage samImage;
+    [SerializeField] private GameObject spinner;
     private Stopwatch stopwatch = new Stopwatch();
     private string absolutePythonPath = "C:/Users/katri/Documents/GitHub/Med7/src/SAM.py";
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
-        
+        spinner.SetActive(false);
+        samImage.gameObject.SetActive(false);
+
     }
 
     // Update is called once per frame
@@ -57,31 +59,46 @@ public class ViewToImage : MonoBehaviour
         // K - Take screenshot to use in SAM
         if (Input.GetKeyDown(KeyCode.K))
         {
-            print("Starting process...");
-
-            // // FOR DEBUG - Stopwatch to measure the time (in ms)
-            // //Stopwatch stopwatch = new Stopwatch();
-            // stopwatch.Start();
-            // // Convert to Texture2D and PNG
-            // CameraViewToImage();
-            // stopwatch.Stop();
-            // print($"Screenshot took: {stopwatch.ElapsedMilliseconds} ms");
-            // stopwatch.Restart();
-
-
-            stopwatch.Start();
+            UnityEngine.Debug.Log("Starting process...");
+            samImage.gameObject.SetActive(false);
 
             // Run python file
-            Texture2D pyImage = PyRunner.Run(absolutePythonPath);
-            if (pyImage != null)
-                samImage.texture = pyImage;
-                samImage.gameObject.SetActive(true);
-
-            stopwatch.Stop();
-            print($"Processing took: {stopwatch.ElapsedMilliseconds / 1000} seconds");
-            stopwatch.Reset();
+            RunSAM();
         }
     }
+    
+    private async void RunSAM()
+    {
+        spinner.SetActive(true);
+
+        stopwatch.Start();
+
+        // Run Python in background thread
+        string outputPath = await Task.Run(() => PyRunner.Run(absolutePythonPath));
+
+        stopwatch.Stop();
+        spinner.SetActive(false);
+
+        // Back on main thread: create Texture2D
+        if (!string.IsNullOrEmpty(outputPath) && System.IO.File.Exists(outputPath))
+        {
+            byte[] bytes = System.IO.File.ReadAllBytes(outputPath);
+            Texture2D pyImage = new Texture2D(2, 2);
+            pyImage.LoadImage(bytes);
+
+            samImage.texture = pyImage;
+            samImage.gameObject.SetActive(true);
+        }
+        else
+        {
+            UnityEngine.Debug.LogError("Invalid file from Python");
+        }
+
+        UnityEngine.Debug.Log($"Processing took: {stopwatch.ElapsedMilliseconds / 1000f} seconds");
+        stopwatch.Reset();
+    }
+
+
 
     private void CameraViewToImage()
     {
