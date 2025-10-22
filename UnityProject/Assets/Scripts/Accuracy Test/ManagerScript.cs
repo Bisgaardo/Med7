@@ -44,7 +44,7 @@ public class ManagerScript : MonoBehaviour
 
     private int currentSequenceIndex;
     private CurrentlyRunningTest currentTest;
-    private readonly List<TestData> results = new();
+    readonly List<TestData> results = new();
 
     void Start()
     {
@@ -74,35 +74,37 @@ public class ManagerScript : MonoBehaviour
 
         int expectedId = sequence[currentSequenceIndex];
 
-        if (clicked.objectId != expectedId)
+        if (clicked.objectId == expectedId)
         {
-            currentTest.misses++;
-            return;
-        }
+            Vector3 targetPos = clicked.GetScreenPosition(mainCamera);
+            float width = clicked.GetDirectionalWidth(mainCamera, currentTest.startMousePosition);
+            float dist = Vector2.Distance(currentTest.startMousePosition, targetPos);
 
-        float movementTime = Time.time - currentTest.startTime;
-        Vector3 targetPos = clicked.GetScreenPosition(mainCamera);
-        float width = clicked.GetDirectionalWidth(mainCamera, currentTest.startMousePosition);
-        float dist = Vector2.Distance(currentTest.startMousePosition, targetPos);
-        float indexDifficulty = Mathf.Log(dist / width + 1f) / Mathf.Log(2f);
+            var result = new TestData(
+                currentTest.misses,
+                Time.time - currentTest.startTime,
+                Mathf.Log(dist / width + 1f) / Mathf.Log(2f)
+            );
 
-        var result = new TestData(currentTest.misses, movementTime, indexDifficulty);
-        results.Add(result);
+            results.Add(result);
+            Debug.Log($"Test {result.testId} | MT: {result.MT:F3} | ID: {result.ID:F3} | Misses: {result.misses}");
 
-        Debug.Log($"Test {result.testId} | MT: {result.MT:F3} | ID: {result.ID:F3} | Misses: {result.misses}");
-
-        currentTest.targetObject?.ResetColor();
-        currentSequenceIndex++;
-
-        if (currentSequenceIndex >= sequence.Count)
-        {
-            StartCoroutine(UploadResults());
-            Debug.Log("All tests complete. Results uploaded.");
+            currentTest.targetObject?.ResetColor();
+            currentSequenceIndex++;
+            
+            if (currentSequenceIndex >= sequence.Count) OnTestComplete();
+            else HighlightNextInSequence();
         }
         else
         {
-            HighlightNextInSequence();
+            currentTest.misses++;
         }
+    }
+
+    void OnTestComplete()
+    {
+        StartCoroutine(UploadResults());
+        Debug.Log("All tests complete. Results uploaded.");
     }
 
     void HighlightNextInSequence()
@@ -129,19 +131,23 @@ public class ManagerScript : MonoBehaviour
     IEnumerator UploadResults()
     {
         StringBuilder sb = new();
-        sb.AppendLine("TestID,Misses,MT,ID");
+
+        sb.AppendLine("TestID, Misses, MT, ID");
 
         foreach (var r in results)
-            sb.AppendLine($"{r.testId},{r.misses},{r.MT:F3},{r.ID:F3}");
+        {
+
+            sb.AppendLine($"{r.testId}, {r.misses}, {r.MT:F3}, {r.ID:F3}");
+        }
 
         byte[] bodyRaw = Encoding.UTF8.GetBytes(sb.ToString());
-        Debug.Log($"Uploading Results ({bodyRaw.Length} bytes)");
+        Debug.Log("Uploading Results:\n" + bodyRaw.Length + " bytes");
 
-        using UnityWebRequest req = new(serverUrl, "POST")
-        {
-            uploadHandler = new UploadHandlerRaw(bodyRaw),
-            downloadHandler = new DownloadHandlerBuffer()
-        };
+        string serverUrl = "http://localhost:3000/upload"; // replace
+
+        using UnityWebRequest req = new(serverUrl, "POST");
+        req.uploadHandler = new UploadHandlerRaw(bodyRaw);
+        req.downloadHandler = new DownloadHandlerBuffer();
         req.SetRequestHeader("Content-Type", "text/csv");
 
         yield return req.SendWebRequest();
