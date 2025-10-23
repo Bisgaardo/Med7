@@ -11,6 +11,9 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/Machine Learning proto.unity
     guid: 9a810a0c8aedb9940b5db57e5dd1e2dd
+  - enabled: 1
+    path: Assets/Scenes/ConsentScene.unity
+    guid: 3cae641652f0a43b7a59a78aa9067b06
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
