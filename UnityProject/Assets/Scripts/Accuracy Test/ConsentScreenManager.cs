@@ -8,7 +8,6 @@ public class ConsentScreenManager : MonoBehaviour
     [Header("UI References")]
     public GameObject consentPanel;
     public TMP_InputField ageInput;
-    public TMP_InputField occupationInput;
     public Button agreeButton;
     public TextMeshProUGUI warningText;
 
@@ -25,13 +24,12 @@ public class ConsentScreenManager : MonoBehaviour
     private void OnAgreeClicked()
     {
         string ageText = ageInput.text.Trim();
-        string occupation = occupationInput.text.Trim();
 
         // Reset warnings
         warningText.text = "";
 
         // Validate inputs
-        if (string.IsNullOrEmpty(ageText) || string.IsNullOrEmpty(occupation))
+        if (string.IsNullOrEmpty(ageText) )
         {
             warningText.text = "Please fill out both fields before continuing.";
             return;
@@ -45,7 +43,6 @@ public class ConsentScreenManager : MonoBehaviour
 
         // Save participant info
         PlayerPrefs.SetInt("UserAge", age);
-        PlayerPrefs.SetString("UserOccupation", occupation);
 
         // If nextSceneName is defined, load it
         if (!string.IsNullOrEmpty(nextSceneName))
