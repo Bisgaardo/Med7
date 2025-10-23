@@ -2232,7 +2232,6 @@ GameObject:
   - component: {fileID: 1275109545}
   - component: {fileID: 1275109546}
   - component: {fileID: 1275109547}
-  - component: {fileID: 1275109548}
   m_Layer: 0
   m_Name: TestManager
   m_TagString: Untagged
@@ -2280,25 +2279,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   mainCamera: {fileID: 688676145}
-  serverUrl: http://localhost:3000/upload
---- !u!114 &1275109548
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1275109543}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 456d39d559c4f234fbf6742ce018cd5f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ConsentScreenManager
-  consentPanel: {fileID: 0}
-  ageInput: {fileID: 0}
-  occupationInput: {fileID: 0}
-  agreeButton: {fileID: 0}
-  warningText: {fileID: 0}
-  nextSceneName: 
+  serverUrl: https://unity.api.runesmithy.dev/upload
 --- !u!1 &1297523318
 GameObject:
   m_ObjectHideFlags: 0

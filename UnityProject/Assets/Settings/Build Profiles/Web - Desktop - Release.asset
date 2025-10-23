@@ -21,9 +21,9 @@ MonoBehaviour:
   m_OverrideGlobalSceneList: 1
   m_Scenes:
   - m_enabled: 1
-    m_path: Assets/Scenes/Machine Learning proto.unity
-  - m_enabled: 1
     m_path: Assets/Scenes/ConsentScene.unity
+  - m_enabled: 1
+    m_path: Assets/Scenes/Machine Learning proto.unity
   m_ScriptingDefines: []
   m_PlayerSettingsYaml:
     m_Settings:
