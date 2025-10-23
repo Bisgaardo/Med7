@@ -2279,7 +2279,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   mainCamera: {fileID: 688676145}
-  sequence: 000000000100000002000000030000000400000005000000060000000700000008000000090000000a0000000b0000000c0000000d0000000e0000000f000000100000001100000012000000130000001400000015000000
+  serverUrl: https://unity.api.runesmithy.dev/upload
 --- !u!1 &1297523318
 GameObject:
   m_ObjectHideFlags: 0
@@ -2651,7 +2651,7 @@ Transform:
   m_GameObject: {fileID: 1448065499}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: -0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 13.3, y: 9.37, z: 5.54}
+  m_LocalPosition: {x: 13.29, y: 9.37, z: 5.54}
   m_LocalScale: {x: 3, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
