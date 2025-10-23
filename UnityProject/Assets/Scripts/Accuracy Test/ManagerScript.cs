@@ -1,25 +1,28 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Networking;
 using System.Collections.Generic;
+using System.Collections;
+using System.Text;
 
-class TestData
+[System.Serializable]
+class ClickRecord
 {
-    static int nextId = 1;
-    public int testId { get; }
-    public int misses;
-    public float MT;
-    public float ID;
+    public int targetId;    // Which object was clicked
+    public int misses;      // Number of wrong clicks before this target
+    public float movementTime; // Movement time (seconds)
+    public float indexDifficulty; // Fitts' law index of difficulty
 
-    public TestData(int misses, float MT, float ID)
+    public ClickRecord(int targetId, int misses, float movementTime, float indexDifficulty)
     {
-        testId = nextId++;
+        this.targetId = targetId;
         this.misses = misses;
-        this.MT = MT;
-        this.ID = ID;
+        this.movementTime = movementTime;
+        this.indexDifficulty = indexDifficulty;
     }
 }
 
-struct CurrentlyRunningTest
+struct CurrentTrial
 {
     public int targetId;
     public Vector2 startMousePosition;
@@ -31,90 +34,138 @@ struct CurrentlyRunningTest
 public class ManagerScript : MonoBehaviour
 {
     [SerializeField] private Camera mainCamera;
-    private List<int> sequence = new()
-{
-    11, 14, 2, 4, 5, 6, 7, 8, 9, 10, 11,
-    12, 13, 14, 15, 16, 17, 18, 19, 20, 21
-};
+    [SerializeField] private string serverUrl = "https://unity.api.runsesmithy.dev/upload";
 
-    int currentSequenceIndex;
-    CurrentlyRunningTest currentTest;
-    readonly List<TestData> results = new();
+    private readonly List<int> targetSequence = new()
+    {
+        0, 14, 2, 4, 5, 6, 7, 8, 9, 10, 11
+    };
+
+    private int currentTargetIndex;
+    private CurrentTrial currentTrial;
+    private readonly List<ClickRecord> clickRecords = new();
 
     void Start()
     {
         mainCamera ??= Camera.main ?? FindObjectOfType<Camera>();
-        HighlightNextInSequence();
+        HighlightNextTarget();
     }
 
     void Update()
     {
         if (Mouse.current.leftButton.wasPressedThisFrame)
-            HandleMouseClick();
+            ProcessClick();
     }
 
-    void HandleMouseClick()
+    void ProcessClick()
     {
         if (!Physics.Raycast(mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue()), out RaycastHit hit))
         {
-            currentTest.misses++;
+            currentTrial.misses++;
             return;
         }
 
-        if (!hit.collider.TryGetComponent(out ClickableObject clicked))
+        if (!hit.collider.TryGetComponent(out ClickableObject clickedObject))
         {
-            currentTest.misses++;
+            currentTrial.misses++;
             return;
         }
 
-        int expectedId = sequence[currentSequenceIndex];
+        int expectedId = targetSequence[currentTargetIndex];
 
-        if (clicked.objectId == expectedId)
+        if (clickedObject.objectId == expectedId)
         {
-            Vector3 targetPos = clicked.GetScreenPosition(mainCamera);
-            float width = clicked.GetDirectionalWidth(mainCamera, currentTest.startMousePosition);
-            float dist = Vector2.Distance(currentTest.startMousePosition, targetPos);
+            Vector3 targetPos = clickedObject.GetScreenPosition(mainCamera);
+            float targetWidth = clickedObject.GetDirectionalWidth(mainCamera, currentTrial.startMousePosition);
+            float movementDistance = Vector2.Distance(currentTrial.startMousePosition, targetPos);
 
-            Debug.Log($"Clicked {clicked.objectId} | TargetPos: {targetPos} | StartPos: {currentTest.startMousePosition} | Width: {width}");
-
-            var result = new TestData(
-                currentTest.misses,
-                Time.time - currentTest.startTime,
-                Mathf.Log(dist / width + 1f) / Mathf.Log(2f)
+            var record = new ClickRecord(
+                currentTrial.targetId,
+                currentTrial.misses,
+                Time.time - currentTrial.startTime,
+                Mathf.Log(movementDistance / targetWidth + 1f) / Mathf.Log(2f)
             );
 
-            results.Add(result);
-            Debug.Log($"Test {result.testId} | MT: {result.MT:F3} | ID: {result.ID:F3} | Misses: {result.misses}");
+            clickRecords.Add(record);
+            Debug.Log($"Target {record.targetId} | MT: {record.movementTime:F3}s | ID: {record.indexDifficulty:F3} | Misses: {record.misses}");
 
-            currentTest.targetObject?.ResetColor();
-            currentSequenceIndex++;
-            HighlightNextInSequence();
+            currentTrial.targetObject?.ResetColor();
+            currentTargetIndex++;
+
+            if (currentTargetIndex >= targetSequence.Count)
+                OnSequenceComplete();
+            else
+                HighlightNextTarget();
         }
         else
         {
-            Debug.Log($"Wrong object! Expected {expectedId}, got {clicked.objectId}");
-            currentTest.misses++;
+            currentTrial.misses++;
         }
     }
 
-    void HighlightNextInSequence()
+    void OnSequenceComplete()
     {
-        if (currentSequenceIndex >= sequence.Count) return;
+        StartCoroutine(UploadResults());
+        Debug.Log("Sequence complete. Uploading results...");
+    }
 
-        int targetId = sequence[currentSequenceIndex];
-        currentTest.startMousePosition = Mouse.current.position.ReadValue();
-        currentTest.startTime = Time.time;
-        currentTest.misses = 0;
+    void HighlightNextTarget()
+    {
+        if (currentTargetIndex >= targetSequence.Count) return;
+
+        int targetId = targetSequence[currentTargetIndex];
+        currentTrial.startMousePosition = Mouse.current.position.ReadValue();
+        currentTrial.startTime = Time.time;
+        currentTrial.misses = 0;
 
         foreach (var obj in FindObjectsByType<ClickableObject>(FindObjectsSortMode.None))
         {
             if (obj.objectId == targetId)
             {
                 obj.HighlightObject();
-                currentTest.targetId = targetId;
-                currentTest.targetObject = obj;
+                currentTrial.targetId = targetId;
+                currentTrial.targetObject = obj;
                 break;
             }
+        }
+    }
+
+    IEnumerator UploadResults()
+    {
+        StringBuilder sb = new();
+        sb.AppendLine("TargetID,Misses,MovementTime,IndexDifficulty");
+
+        foreach (var record in clickRecords)
+            sb.AppendLine($"{record.targetId},{record.misses},{record.movementTime:F3},{record.indexDifficulty:F3}");
+
+        byte[] bodyRaw = Encoding.UTF8.GetBytes(sb.ToString());
+        Debug.Log($"Uploading Results ({bodyRaw.Length} bytes)");
+
+        using UnityWebRequest req = new(serverUrl, "POST")
+        {
+            uploadHandler = new UploadHandlerRaw(bodyRaw),
+            downloadHandler = new DownloadHandlerBuffer()
+        };
+        req.SetRequestHeader("Content-Type", "text/csv");
+
+        yield return req.SendWebRequest();
+
+        if (req.result == UnityWebRequest.Result.Success)
+            Debug.Log("Results uploaded successfully");
+        else
+        {
+            StringBuilder err = new();
+            err.AppendLine("Upload failed:");
+            err.AppendLine($"• Result: {req.result}");
+            err.AppendLine($"• Response Code: {req.responseCode}");
+            err.AppendLine($"• Error: {req.error}");
+            err.AppendLine($"• URL: {req.url}");
+            err.AppendLine($"• Response Text: {req.downloadHandler?.text}");
+            err.AppendLine($"• Headers:");
+            foreach (var kvp in req.GetResponseHeaders() ?? new Dictionary<string, string>())
+                err.AppendLine($"    {kvp.Key}: {kvp.Value}");
+
+            Debug.LogError(err.ToString());
         }
     }
 }
