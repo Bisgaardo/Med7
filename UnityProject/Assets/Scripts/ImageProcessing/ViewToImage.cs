@@ -4,7 +4,6 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Threading.Tasks;
 
-
 public class ViewToImage : MonoBehaviour
 {
     public Texture2D CameraViewImage;
@@ -17,47 +16,39 @@ public class ViewToImage : MonoBehaviour
     private Stopwatch stopwatch = new Stopwatch();
     private string absolutePythonPath = "C:/Users/katri/Documents/GitHub/Med7/src/SAM.py";
 
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
         spinner.SetActive(false);
         samImage.gameObject.SetActive(false);
-
     }
 
-    // Update is called once per frame
     void Update()
     {
         _camera.transform.position = new Vector3(Camera.main.transform.position.x, Camera.main.transform.position.y, Camera.main.transform.position.z);
 
-        // SPACE - Screenshot and run Canny Edge Detection
-        if (Input.GetKeyDown(KeyCode.Space))
+        // K - Screenshot and run Canny Edge Detection
+        if (Input.GetKeyDown(KeyCode.K))
         {
             // FOR DEBUG - Stopwatch to measure the time (in ms)
-            //Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
-
 
             // Convert to Texture2D and PNG
             CameraViewToImage();
-
 
             stopwatch.Stop();
             print($"Screenshot took: {stopwatch.ElapsedMilliseconds} ms");
             stopwatch.Restart();
 
-
             // Image processing function
             ImageProcessing.CannyMethod(CameraViewImage, path);
-
 
             stopwatch.Stop();
             print($"Processing took: {stopwatch.ElapsedMilliseconds} ms");
             stopwatch.Reset();
         }
 
-        // K - Take screenshot to use in SAM
-        if (Input.GetKeyDown(KeyCode.K))
+        // SPACE - Screenshot and run SAM
+        if (Input.GetKeyDown(KeyCode.Space))
         {
             UnityEngine.Debug.Log("Starting process...");
             samImage.gameObject.SetActive(false);
@@ -66,16 +57,17 @@ public class ViewToImage : MonoBehaviour
             RunSAM();
         }
     }
-    
+
     private async void RunSAM()
     {
+        // Activate loading spinner and stopwatch
         spinner.SetActive(true);
-
         stopwatch.Start();
 
         // Run Python in background thread
         string outputPath = await Task.Run(() => PyRunner.Run(absolutePythonPath));
 
+        // Deactivate loading spinner and stopwatch
         stopwatch.Stop();
         spinner.SetActive(false);
 
@@ -94,12 +86,10 @@ public class ViewToImage : MonoBehaviour
             UnityEngine.Debug.LogError("Invalid file from Python");
         }
 
-        UnityEngine.Debug.Log($"Processing took: {stopwatch.ElapsedMilliseconds / 1000f} seconds");
+        UnityEngine.Debug.Log($"Process took: {stopwatch.ElapsedMilliseconds / 1000f} seconds");
         stopwatch.Reset();
     }
-
-
-
+    
     private void CameraViewToImage()
     {
         // Create a temporary RenderTexture

@@ -6,24 +6,23 @@ public static class PyRunner
 {
     private static readonly string pythonExePath = @"C:\Users\katri\Documents\GitHub\Med7\venv\Scripts\python.exe";
     private static Image image;
-    // Run Python files inside Unity's assets folder
     public static string Run(string relativePythonPath)
     {
-        // Creating an absolute path
+        // Create an absolute path
         string pythonFileFullPath = Path.Combine(Application.dataPath, relativePythonPath);
         string outputPath = null;
 
-        //Check if the python file exists
+        //Check if python file exists
         if (!System.IO.File.Exists(pythonFileFullPath))
         {
             UnityEngine.Debug.LogError($"Python file not found: {pythonFileFullPath}");
             return null;
         }
 
-        // Setup for running python
+        // Setup info for running python
         ProcessStartInfo startInfo = new ProcessStartInfo
         {
-            // Python version
+            // Python version / Python.exe file
             FileName = pythonExePath,
 
             // Path for python file
@@ -32,23 +31,21 @@ public static class PyRunner
             // Don't use cmd/shell for exectuing
             UseShellExecute = false,
 
-            // Outputs print in Unity
+            // Output prints in Unity
             RedirectStandardOutput = true,
 
-            // Errors print in Unity
+            // Error prints in Unity
             RedirectStandardError = true,
 
-            // No console pops up during execution
+            // No console popup during execution
             CreateNoWindow = true
         };
 
         // Run the process
         using (Process process = new Process())
         {
-            // Use the "startInfo" information for this process
+            // Use the setup information for this process and run
             process.StartInfo = startInfo;
-
-            // Launch python interpreter
             process.Start();
 
             // Read and save outputs & errors from python
@@ -58,10 +55,8 @@ public static class PyRunner
             // Freeze Unity until python is done
             process.WaitForExit();
 
-            // Log python outputs in the Unity console
+            // Log python outputs and errors in Unity
             UnityEngine.Debug.Log($"[Python Output]\n{output}");
-
-            // Log python errors in the Unity console
             if (!string.IsNullOrEmpty(error))
                 UnityEngine.Debug.LogError($"[Python Error]\n{error}");
 
