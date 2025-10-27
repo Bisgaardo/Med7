@@ -86,6 +86,7 @@ Logs/
 MemoryCaptures/
 Recordings/
 *.dwlt
+venv/
 
 UnityProject/.vs/UnityProject/FileContentIndex/2de19a31-6519-4a41-b3eb-8cab48d6b0e1.vsidx
 
