@@ -1,0 +1,269 @@
+// SPDX-License-Identifier: MIT
+#pragma kernel InitCentroids
+#pragma kernel ClearCentroidAccum
+#pragma kernel AssignLabels
+#pragma kernel UpdateCentroids
+#pragma kernel BuildGrid
+#pragma kernel SmoothGrid
+#pragma kernel CopyLabels
+
+struct Centroid {
+    float3 position;
+    float3 color;
+    uint   count;
+};
+
+// buffers
+StructuredBuffer<float4> _SplatPos;
+Texture2D<float4>        _SplatColor;
+StructuredBuffer<float4> _SplatOther;
+
+// labels / centroids
+RWStructuredBuffer<int>      _SplatLabels;
+RWStructuredBuffer<Centroid> _Centroids;
+RWStructuredBuffer<Centroid> _CentroidAccum;
+
+// deletion mask
+StructuredBuffer<uint> _SplatDeletedBits;
+int _DeletedBitsValid;
+StructuredBuffer<uint> _SplatSelectedBits;
+int _UseSelection;
+
+// grid
+RWStructuredBuffer<uint> _GridCounter;
+RWStructuredBuffer<uint> _GridIndices;
+RWStructuredBuffer<uint> _SplatToCell;
+
+int   _SplatCount;
+int   _NumClusters;
+int   _FeatureMode;
+int   _StartIndex;
+int   _BatchCount;
+float _ColorWeight;
+float _PosNormScale;
+float _OutlierScaleLimit;
+float _ScaleWeight;
+float _SmoothRadius;
+float _ClusterRadius;
+int   _HasOtherBuffer;
+
+int3   _GridResolution;
+float3 _GridOrigin;
+float  _CellSize;
+
+#define MAX_NEIGHBORS 64u
+
+// Copy helpers
+StructuredBuffer<int>      _LabelsSrc;
+RWStructuredBuffer<int>    _LabelsDst;
+
+// -----------------------------------------------------
+// Utility
+// -----------------------------------------------------
+float3 SRGBToLinear(float3 c) { return pow(max(c,0.0), 2.2); }
+
+float3 ReadLinearColor(uint id, uint splatCount) {
+    uint texWidth = (uint)ceil(sqrt((float)splatCount));
+    uint x = id % texWidth;
+    uint y = id / texWidth;
+    float3 srgb = _SplatColor.Load(int3(x,y,0)).rgb;
+    return SRGBToLinear(srgb);
+}
+
+bool IsDeleted(uint i) {
+    if (_DeletedBitsValid == 0) return false;
+    uint word = i >> 5;
+    uint bit  = 1u << (i & 31);
+    return (_SplatDeletedBits[word] & bit) != 0;
+}
+
+float DecodeScale(uint i) {
+    if (_HasOtherBuffer == 0) return 1.0;
+    return exp(_SplatOther[i].w);
+}
+
+// -----------------------------------------------------
+// Kernels
+// -----------------------------------------------------
+[numthreads(64,1,1)]
+void InitCentroids(uint3 id : SV_DispatchThreadID) {
+    uint k = id.x; if (k >= (uint)_NumClusters) return;
+    uint stride = max(1u, (uint)_SplatCount / max(1, _NumClusters));
+    uint idx = (k * stride + 13u) % (uint)_SplatCount;
+
+    Centroid c;
+    c.position = _SplatPos[idx].xyz;
+    c.color    = ReadLinearColor(idx, _SplatCount);
+    c.count    = 1u;
+    _Centroids[k] = c;
+}
+
+[numthreads(64,1,1)]
+void ClearCentroidAccum(uint3 id : SV_DispatchThreadID) {
+    uint k = id.x; if (k >= (uint)_NumClusters) return;
+    Centroid z; z.position = 0; z.color = 0; z.count = 0;
+    _CentroidAccum[k] = z;
+}
+
+[numthreads(128,1,1)]
+void AssignLabels(uint3 id : SV_DispatchThreadID)
+{
+    uint i = _StartIndex + id.x;
+    if (id.x >= (uint)_BatchCount || i >= (uint)_SplatCount) return;
+    if (IsDeleted(i)) return;
+    if (_UseSelection != 0)
+    {
+        uint w = i >> 5, b = 1u << (i & 31);
+        if ((_SplatSelectedBits[w] & b) == 0) return;
+    }
+
+    float3 pos   = _SplatPos[i].xyz;
+    float3 col   = ReadLinearColor(i, _SplatCount);
+    float  scale = DecodeScale(i);
+
+    // Slight gamma to enhance contrast
+    col = pow(col, 0.5);
+
+    // Clamp dark colors instead of skipping them
+    float lum = dot(col, float3(0.333, 0.333, 0.333));
+    if (lum < 0.02) col = float3(0.02, 0.02, 0.02);
+
+    // Convert RGB → HSV and quantize hue into 12 bins
+    float4 K = float4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+    float4 p = col.g < col.b ? float4(col.bg, K.wz) : float4(col.gb, K.xy);
+    float4 q = col.r < p.x   ? float4(p.xyw, col.r) : float4(col.r, p.yzx);
+    float d = q.x - min(q.w, q.y);
+    float e = 1e-10;
+    float3 hsv = float3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+    hsv.x = floor(hsv.x * 12.0) / 12.0;
+    // HSV → RGB back
+    float3 K2 = float3(1.0, 2.0/3.0, 1.0/3.0);
+    float3 pcol = abs(frac(hsv.x + K2) * 6.0 - 3.0);
+    float3 qcol = saturate(pcol - 1.0);
+    col = hsv.z * lerp(float3(1,1,1), qcol, hsv.y);
+
+    // Feature normalisation
+    float3 np = pos / max(_PosNormScale, 1e-5);
+    float bestD = 3.4e38;
+    uint  bestK = 0u;
+
+    [loop]
+    for (uint k = 0; k < (uint)_NumClusters; ++k)
+    {
+        Centroid c = _Centroids[k];
+        float3 cpos = c.position;
+        float3 ccol = c.color;
+        float3 ncp  = cpos / max(_PosNormScale, 1e-5);
+
+        // --- Ignore Y-axis difference (no vertical cutoff) ---
+        float3 dpv = np - ncp;
+        dpv.y = 0.0;
+        float dp = length(dpv);
+
+        float dc = distance(col, ccol);
+        float ds = abs(scale - 1.0);
+
+        float d;
+        if (_FeatureMode == 0)      d = dp;
+        else if (_FeatureMode == 1) d = dc;
+        else                        d = dp * (1.0 - _ColorWeight - _ScaleWeight)
+                                      + dc * _ColorWeight
+                                      + ds * _ScaleWeight;
+
+        if (d < bestD) { bestD = d; bestK = k; }
+    }
+
+    _SplatLabels[i] = (int)bestK;
+
+    // Simple float accumulation
+    Centroid accum = _CentroidAccum[bestK];
+    accum.position += pos;
+    accum.color    += col;
+    accum.count    += 1u;
+    _CentroidAccum[bestK] = accum;
+}
+
+
+
+[numthreads(64,1,1)]
+void UpdateCentroids(uint3 id : SV_DispatchThreadID) {
+    uint k = id.x; if (k >= (uint)_NumClusters) return;
+    Centroid a = _CentroidAccum[k];
+    if (a.count == 0u) return;
+
+    float invCount = rcp((float)a.count);
+    Centroid c;
+    c.position = a.position * invCount;
+    c.color    = a.color * invCount;
+    c.count    = 1u;
+    _Centroids[k] = c;
+}
+
+// -----------------------------------------------------
+// Grid helpers + smoothing (unchanged)
+// -----------------------------------------------------
+uint3 WorldToCell(float3 p) {
+    float3 rel = (p - _GridOrigin) / _CellSize;
+    int3 c = (int3)floor(rel + 0.5);
+    c = clamp(c, int3(0,0,0), _GridResolution - 1);
+    return (uint3)c;
+}
+uint CellIndex(uint3 c){
+    return c.x + (c.y*_GridResolution.x) + (c.z*_GridResolution.x*_GridResolution.y);
+}
+
+[numthreads(128,1,1)]
+void BuildGrid(uint3 id:SV_DispatchThreadID){
+    uint i = id.x; if (i >= (uint)_SplatCount) return;
+    if (IsDeleted(i)) return;
+
+    float3 p = _SplatPos[i].xyz;
+    uint3 c = WorldToCell(p);
+    uint ci = CellIndex(c);
+    uint offset;
+    InterlockedAdd(_GridCounter[ci], 1u, offset);
+    if (offset < MAX_NEIGHBORS) _GridIndices[ci * MAX_NEIGHBORS + offset] = i;
+    _SplatToCell[i] = ci;
+}
+
+[numthreads(128,1,1)]
+void SmoothGrid(uint3 id:SV_DispatchThreadID){
+    uint i=id.x; if(i >= (uint)_SplatCount) return;
+    if(IsDeleted(i)) return;
+
+    int my=_SplatLabels[i]; if(my<0) return;
+    float3 p=_SplatPos[i].xyz;
+    uint3 c=WorldToCell(p);
+
+    int bestLabel=my,bestVotes=0;
+    [unroll]for(int dz=-1;dz<=1;++dz)
+    [unroll]for(int dy=-1;dy<=1;++dy)
+    [unroll]for(int dx=-1;dx<=1;++dx){
+        int3 cc=(int3)c+int3(dx,dy,dz);
+        if(any(cc<0)||any(cc>=(int3)_GridResolution))continue;
+        uint ci=(uint)(cc.x+cc.y*_GridResolution.x+cc.z*_GridResolution.x*_GridResolution.y);
+        uint count=min(_GridCounter[ci],MAX_NEIGHBORS);
+        int votes[64]; [unroll]for(int t=0;t<64;++t)votes[t]=0;
+
+        for(uint n=0;n<count;++n){
+            uint j=_GridIndices[ci*MAX_NEIGHBORS+n];
+            if(j==i)continue;
+            if(distance(p,_SplatPos[j].xyz)<=_SmoothRadius){
+                int l=_SplatLabels[j];
+                if(l>=0 && l<64) votes[l]+=1;
+            }
+        }
+        [unroll]for(int t=0;t<64;++t){
+            if(votes[t]>bestVotes){bestVotes=votes[t];bestLabel=t;}
+        }
+    }
+    _SplatLabels[i]=bestLabel;
+}
+
+[numthreads(128,1,1)]
+void CopyLabels(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= (uint)_SplatCount) return;
+    _LabelsDst[i] = _LabelsSrc[i];
+}
