@@ -538,18 +538,37 @@ MonoBehaviour:
   captureSize: 4096
   maskThreshold: 0.8
   applyMode: 0
-  selectionSize: 8
-  applySelection: 0
+  selectionSize: 0
+  applySelection: 1
   positivePoints: []
   useLocalPython: 1
   pythonExe: C:\UnityRepos\Med_7_Project\venv\Scripts\Python.exe
   pythonCli: C:\UnityRepos\Med_7_Project\src\cli_sam.py
-  samCheckpoint: 
+  samCheckpoint: C:\UnityRepos\Med_7_Project\weight\sam_vit_h_4b8939.pth
   samModel: vit_h
   samForceCpu: 0
   openMaskAfterRun: 1
   usePersistentWorker: 1
   verboseLogs: 1
+  requestDepth: 1
+  zoeVariant: ZoeD_NK
+  zoeRoot: C:\UnityRepos\Med_7_Project\ZoeDepth-main
+  depthTolerance: 0.03
+  autoCalibrateDepth: 1
+  calibrationSamples: 4000
+  depthScale: 1
+  depthBias: 0
+  invertExternalDepth: 0
+  useZoeRelativeBand: 1
+  zoeBandK: 1
+  useEllipseProbe: 0
+  zoeForceCpu: 0
+  zoeMaxDim: 1024
+  maxEccentricity: 10
+  maxAreaPx: 2000
+  debugShowMask: 1
+  debugShowDepth: 1
+  debugOverlayAlpha: 0.35
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

@@ -16,6 +16,7 @@ StructuredBuffer<SplatViewData> _SplatViewData;
 StructuredBuffer<float3> _SplatPos;
 StructuredBuffer<float4> _SeedWorld;
 Texture2D<float>         _MaskTex;
+Texture2D<float>         _DepthTex; // optional external per-pixel depth (e.g., ZoeDepth), normalized [0,1]
 
 RWByteAddressBuffer _SelectedBits;
 RWByteAddressBuffer _DepthRange;
@@ -48,6 +49,19 @@ float    _DepthOcclusionBias;
 float2   _RenderViewportSize;
 float4x4 _ObjectToWorld;
 float    _SeedCullEps;
+int      _UseExtDepth;        // if !=0, compare splat depth to _DepthTex at mask pixel
+float    _DepthTolerance;     // allowed absolute difference between ndc.z and external depth
+float    _DepthScale;         // linear mapping scale for external depth
+float    _DepthBias;          // linear mapping bias for external depth
+int      _DepthInvert;        // if !=0, use (1-extDepth) before mapping
+int      _UseEllipseProbe;    // if 0, only test center pixel; if 1, sample ellipse neighborhood
+int      _MaxRadiusPx;        // if >0, skip splats whose screen-space radius exceeds this
+int      _MinRadiusPx;        // if >0, skip splats smaller than this to avoid speckle
+int      _UseZoeBand;         // if !=0, gate by ZoeDepth relative band only (no NDC mapping)
+float    _ZoeCenter;          // ZoeDepth median inside mask
+float    _ZoeHalfWidth;       // k * IQR inside mask
+float    _MaxEccentricity;    // if >0, reject if major/minor > this
+float    _MaxAreaPx;          // if >0, reject if major*minor (approx area) exceeds this
 
 void SetBit(uint index)
 {
@@ -162,32 +176,61 @@ bool EvaluateMaskAtUv(float2 uvBL, float2 uvTL, out int2 outPix)
 
 bool EvaluateMaskAtNdc(float2 ndcXY, out int2 outPix)
 {
-    float2 uvBL = ndcXY * float2(0.5, -0.5) + float2(0.5, 0.5);
+    // Map NDC (-1..1, bottom=-1, top=1) to bottom-left UV (0..1)
+    // Correct mapping is uvBL = ndc*0.5 + 0.5. Previous sign flip caused vertical inversion.
+    float2 uvBL = ndcXY * 0.5 + 0.5;
     float2 uvTL = float2(uvBL.x, 1.0 - uvBL.y);
     return EvaluateMaskAtUv(uvBL, uvTL, outPix);
 }
 
 bool EvaluateMask(uint index, float3 ndc, out int2 outPix)
 {
-    if (EvaluateMaskAtNdc(ndc.xy, outPix))
-        return true;
-
-    if (_RenderViewportSize.x <= 0.0 || _RenderViewportSize.y <= 0.0)
-    {
-        outPix = int2(-1, -1);
-        return false;
-    }
-
+    // Always fetch view + apply geometric gates
     SplatViewData view = _SplatViewData[index];
     float2 axis1 = view.axis1;
     float2 axis2 = view.axis2;
-    float axisMagnitude = dot(axis1, axis1) + dot(axis2, axis2);
+    float l1 = length(axis1);
+    float l2 = length(axis2);
+    float axisMagnitude = l1*l1 + l2*l2;
     if (axisMagnitude <= 1e-8)
     {
         outPix = int2(-1, -1);
         return false;
     }
+    float axisRadius = sqrt(axisMagnitude);
+    float major = max(l1, l2);
+    float minor = max(1e-6, min(l1, l2));
+    // Size gates
+    if ((_MaxRadiusPx > 0 && axisRadius > (float)_MaxRadiusPx) ||
+        (_MinRadiusPx > 0 && axisRadius < (float)_MinRadiusPx))
+    {
+        outPix = int2(-1, -1);
+        return false;
+    }
+    // Eccentricity and area gates
+    if (_MaxEccentricity > 0.0 && (major / minor) > _MaxEccentricity)
+    {
+        outPix = int2(-1, -1);
+        return false;
+    }
+    if (_MaxAreaPx > 0.0 && (major * minor) > _MaxAreaPx)
+    {
+        outPix = int2(-1, -1);
+        return false;
+    }
 
+    // Fast path: center only
+    if (_UseEllipseProbe == 0)
+    {
+        return EvaluateMaskAtNdc(ndc.xy, outPix);
+    }
+
+    // Neighborhood probe
+    if (_RenderViewportSize.x <= 0.0 || _RenderViewportSize.y <= 0.0)
+    {
+        outPix = int2(-1, -1);
+        return false;
+    }
     float2 viewport = max(_RenderViewportSize, float2(1.0, 1.0));
     float2 invViewport = 2.0 / viewport;
     const float ringScales[4] = { 0.55f, 0.95f, 1.30f, 1.70f };
@@ -201,8 +244,6 @@ bool EvaluateMask(uint index, float3 ndc, out int2 outPix)
         float2( 0.7071f, -0.7071f),
         float2(-0.7071f, -0.7071f)
     };
-
-    float axisRadius = sqrt(axisMagnitude);
     float adapt = saturate(axisRadius * 0.6f);
 
     [loop]
@@ -249,6 +290,24 @@ void ApplyMaskSelection(uint3 id : SV_DispatchThreadID)
 
     int2 maskPix;
     bool inMask = EvaluateMask(i, ndc, maskPix);
+
+    // Relative ZoeDepth band gate (object-only, no NDC mapping)
+    if (inMask && _UseZoeBand != 0 && maskPix.x >= 0)
+    {
+        float extD = _DepthTex.Load(int3(maskPix, 0)).r;
+        if (_DepthInvert != 0) extD = 1.0 - extD;
+        if (abs(extD - _ZoeCenter) > _ZoeHalfWidth)
+            inMask = false;
+    }
+
+    if (inMask && _UseExtDepth != 0 && maskPix.x >= 0)
+    {
+        float extD = _DepthTex.Load(int3(maskPix, 0)).r;
+        if (_DepthInvert != 0) extD = 1.0 - extD;
+        float mapped = saturate(extD * _DepthScale + _DepthBias);
+        if (abs(depthNdc - mapped) > _DepthTolerance)
+            inMask = false;
+    }
 
     if (inMask && _ApplyPerPixelOcclusion != 0 && maskPix.x >= 0)
     {
@@ -329,6 +388,22 @@ void ApplyMaskSelectionLite(uint3 id : SV_DispatchThreadID)
 
     int2 maskPix;
     bool inMask = EvaluateMask(i, ndc, maskPix);
+    if (inMask && _UseZoeBand != 0 && maskPix.x >= 0)
+    {
+        float extD = _DepthTex.Load(int3(maskPix, 0)).r;
+        if (_DepthInvert != 0) extD = 1.0 - extD;
+        if (abs(extD - _ZoeCenter) > _ZoeHalfWidth)
+            inMask = false;
+    }
+
+    if (inMask && _UseExtDepth != 0 && maskPix.x >= 0)
+    {
+        float extD = _DepthTex.Load(int3(maskPix, 0)).r;
+        if (_DepthInvert != 0) extD = 1.0 - extD;
+        float mapped = saturate(extD * _DepthScale + _DepthBias);
+        if (abs(depthNdc - mapped) > _DepthTolerance)
+            inMask = false;
+    }
 
     if (inMask)
     {
