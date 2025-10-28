@@ -3,6 +3,11 @@ using UnityEngine.UI;
 using TMPro;
 using UnityEngine.SceneManagement;
 
+public static class SessionData
+{
+    public static int age;
+}
+
 public class ConsentScreenManager : MonoBehaviour
 {
     [Header("UI References")]
@@ -29,7 +34,7 @@ public class ConsentScreenManager : MonoBehaviour
         warningText.text = "";
 
         // Validate inputs
-        if (string.IsNullOrEmpty(ageText) )
+        if (string.IsNullOrEmpty(ageText))
         {
             warningText.text = "Please fill out both fields before continuing.";
             return;
@@ -43,10 +48,12 @@ public class ConsentScreenManager : MonoBehaviour
 
         // Save participant info
         PlayerPrefs.SetInt("UserAge", age);
+        PlayerPrefs.Save();
 
         // If nextSceneName is defined, load it
         if (!string.IsNullOrEmpty(nextSceneName))
         {
+            SessionData.age = age;
             SceneManager.LoadScene(nextSceneName);
         }
         else

@@ -8,7 +8,9 @@ using System.Text;
 [System.Serializable]
 class ClickRecord
 {
-    public int targetId;    // Which object was clicked
+    public int userAge;
+    public System.Guid uuid;
+    public int targetObjectId;    // Which object was clicked
     public int misses;      // Number of wrong clicks before this target
     public float movementTime; // Movement time (seconds)
     public float indexDifficulty; // Fitts' law index of difficulty
@@ -24,7 +26,7 @@ class ClickRecord
 
 struct CurrentTrial
 {
-    public int targetId;
+    public int targetObjectId;
     public Vector2 startMousePosition;
     public float startTime;
     public int misses;
@@ -35,6 +37,10 @@ public class ManagerScript : MonoBehaviour
 {
     [SerializeField] private Camera mainCamera;
     [SerializeField] private string serverUrl = "https://unity.api.runsesmithy.dev/upload";
+
+    int userAge = SessionData.age;
+    System.Guid uuid = System.Guid.NewGuid();
+
 
     private readonly List<int> targetSequence = new()
     {
@@ -80,10 +86,12 @@ public class ManagerScript : MonoBehaviour
             float movementDistance = Vector2.Distance(currentTrial.startMousePosition, targetPos);
 
             var record = new ClickRecord(
-                currentTrial.targetId,
-                currentTrial.misses,
-                Time.time - currentTrial.startTime,
-                Mathf.Log(movementDistance / targetWidth + 1f) / Mathf.Log(2f)
+                userAge = SessionData.age,
+                uuid = uuid,
+                targetObjectId = currentTrial.targetObjectId,
+                misses = currentTrial.misses,
+                movementTime = Time.time - currentTrial.startTime,
+                indexDifficulty = Mathf.Log(movementDistance / targetWidth + 1f) / Mathf.Log(2f)
             );
 
             clickRecords.Add(record);
@@ -113,17 +121,17 @@ public class ManagerScript : MonoBehaviour
     {
         if (currentTargetIndex >= targetSequence.Count) return;
 
-        int targetId = targetSequence[currentTargetIndex];
+        int targetObjectId = targetSequence[currentTargetIndex];
         currentTrial.startMousePosition = Mouse.current.position.ReadValue();
         currentTrial.startTime = Time.time;
         currentTrial.misses = 0;
 
         foreach (var obj in FindObjectsByType<ClickableObject>(FindObjectsSortMode.None))
         {
-            if (obj.objectId == targetId)
+            if (obj.objectId == targetObjectId)
             {
                 obj.HighlightObject();
-                currentTrial.targetId = targetId;
+                currentTrial.targetObjectId = targetObjectId;
                 currentTrial.targetObject = obj;
                 break;
             }
@@ -133,10 +141,10 @@ public class ManagerScript : MonoBehaviour
     IEnumerator UploadResults()
     {
         StringBuilder sb = new();
-        sb.AppendLine("TargetID,Misses,MovementTime,IndexDifficulty");
+        sb.AppendLine("uuid,user_age,target_object_id,misses,movement_time,index_difficulty");
 
         foreach (var record in clickRecords)
-            sb.AppendLine($"{record.targetId},{record.misses},{record.movementTime:F3},{record.indexDifficulty:F3}");
+            sb.AppendLine($"{record.uuid},{record.userAge},{record.targetObjectId},{record.misses},{record.movementTime:F3},{record.indexDifficulty:F3}");
 
         byte[] bodyRaw = Encoding.UTF8.GetBytes(sb.ToString());
         Debug.Log($"Uploading Results ({bodyRaw.Length} bytes)");
