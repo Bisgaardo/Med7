@@ -15,9 +15,11 @@ class ClickRecord
     public float movementTime; // Movement time (seconds)
     public float indexDifficulty; // Fitts' law index of difficulty
 
-    public ClickRecord(int targetId, int misses, float movementTime, float indexDifficulty)
+    public ClickRecord(int userAge, System.Guid uuid, int targetObjectId, int misses, float movementTime, float indexDifficulty)
     {
-        this.targetId = targetId;
+        this.userAge = userAge;
+        this.uuid = uuid;
+        this.targetObjectId = targetObjectId;
         this.misses = misses;
         this.movementTime = movementTime;
         this.indexDifficulty = indexDifficulty;
@@ -53,7 +55,7 @@ public class ManagerScript : MonoBehaviour
 
     void Start()
     {
-        mainCamera ??= Camera.main ?? FindObjectOfType<Camera>();
+    mainCamera ??= Camera.main ?? FindFirstObjectByType<Camera>();
         HighlightNextTarget();
     }
 
@@ -86,16 +88,16 @@ public class ManagerScript : MonoBehaviour
             float movementDistance = Vector2.Distance(currentTrial.startMousePosition, targetPos);
 
             var record = new ClickRecord(
-                userAge = SessionData.age,
-                uuid = uuid,
-                targetObjectId = currentTrial.targetObjectId,
-                misses = currentTrial.misses,
-                movementTime = Time.time - currentTrial.startTime,
-                indexDifficulty = Mathf.Log(movementDistance / targetWidth + 1f) / Mathf.Log(2f)
+                userAge: SessionData.age,
+                uuid: uuid,
+                targetObjectId: clickedObject.objectId,
+                misses: currentTrial.misses,
+                movementTime: Time.time - currentTrial.startTime,
+                indexDifficulty: Mathf.Log(movementDistance / targetWidth + 1f) / Mathf.Log(2f)
             );
 
             clickRecords.Add(record);
-            Debug.Log($"Target {record.targetId} | MT: {record.movementTime:F3}s | ID: {record.indexDifficulty:F3} | Misses: {record.misses}");
+            Debug.Log($"Target {record.targetObjectId} | MT: {record.movementTime:F3}s | ID: {record.indexDifficulty:F3} | Misses: {record.misses}");
 
             currentTrial.targetObject?.ResetColor();
             currentTargetIndex++;
@@ -125,6 +127,8 @@ public class ManagerScript : MonoBehaviour
         currentTrial.startMousePosition = Mouse.current.position.ReadValue();
         currentTrial.startTime = Time.time;
         currentTrial.misses = 0;
+;
+
 
         foreach (var obj in FindObjectsByType<ClickableObject>(FindObjectsSortMode.None))
         {
