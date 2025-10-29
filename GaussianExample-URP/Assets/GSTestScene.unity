@@ -540,6 +540,10 @@ MonoBehaviour:
   applyMode: 0
   selectionSize: 0
   applySelection: 1
+  alwaysIncludeMask: 0
+  useFrontGate: 0
+  useSceneOcclusion: 0
+  sceneOcclusionBias: 0.01
   positivePoints: []
   useLocalPython: 1
   pythonExe: C:\UnityRepos\Med_7_Project\venv\Scripts\Python.exe
@@ -550,25 +554,26 @@ MonoBehaviour:
   openMaskAfterRun: 1
   usePersistentWorker: 1
   verboseLogs: 1
-  requestDepth: 1
+  requestDepth: 0
   zoeVariant: ZoeD_NK
   zoeRoot: C:\UnityRepos\Med_7_Project\ZoeDepth-main
-  depthTolerance: 0.03
+  depthTolerance: 0.025
   autoCalibrateDepth: 1
+  lockCalibration: 0
   calibrationSamples: 4000
   depthScale: 1
   depthBias: 0
   invertExternalDepth: 0
-  useZoeRelativeBand: 1
+  useZoeRelativeBand: 0
   zoeBandK: 1
   useEllipseProbe: 0
   zoeForceCpu: 0
-  zoeMaxDim: 1024
-  maxEccentricity: 10
+  zoeMaxDim: 2048
+  maxEccentricity: 50
   maxAreaPx: 2000
-  debugShowMask: 1
-  debugShowDepth: 1
-  debugOverlayAlpha: 0.35
+  debugShowMask: 0
+  debugShowDepth: 0
+  debugOverlayAlpha: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

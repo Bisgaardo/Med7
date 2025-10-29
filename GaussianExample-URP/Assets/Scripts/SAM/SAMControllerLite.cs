@@ -28,6 +28,15 @@ public class SAMControllerLite : MonoBehaviour
     [Range(-16, 16)] public int selectionSize = 0;
     [Tooltip("When disabled, running SAM will not modify splat selection; it only produces the mask (and can open it).")]
     public bool applySelection = false;
+    [Tooltip("Always include splats that hit the SAM mask even if depth gates would reject them.")]
+    public bool alwaysIncludeMask = false;
+    [Tooltip("Front-only gate: keep splats only if their NDC depth is in front of (<=) mapped Zoe depth within tolerance. Great to stop background bleed.")]
+    public bool useFrontGate = true;
+    [Header("Scene Occlusion (geometry)")]
+    [Tooltip("Use scene-based occlusion: first gather per-pixel nearest NDC depth over masked region from the splats, then reject splats that are behind that local front. Independent of ZoeDepth.")]
+    public bool useSceneOcclusion = true;
+    [Tooltip("Extra bias added to the per-pixel occlusion threshold (in NDC).")]
+    [Range(0f, 0.1f)] public float sceneOcclusionBias = 0.01f;
 
     [Header("Prompts (points)")]
     public List<Vector2> positivePoints = new List<Vector2>(); // normalized [0,1] in BL coordinates
@@ -61,6 +70,8 @@ public class SAMControllerLite : MonoBehaviour
     [Range(0f, 0.2f)] public float depthTolerance = 0.03f;
     [Tooltip("Automatically fit ZoeDepth to NDC (computes scale & bias per run)")]
     public bool autoCalibrateDepth = true;
+    [Tooltip("Lock the last good calibration (invert/scale/bias) and reuse it for subsequent runs.")]
+    public bool lockCalibration = false;
     [Tooltip("Max calibration samples (pixels) used to fit depth mapping")]
     [Range(256, 10000)] public int calibrationSamples = 4000;
     [Tooltip("Linear scale applied to external depth before gating")] public float depthScale = 1f;
@@ -497,7 +508,7 @@ public class SAMControllerLite : MonoBehaviour
                 }
             }
             // Auto-calibrate external depth -> NDC mapping (scale/bias) if requested
-            if (requestDepth && autoCalibrateDepth)
+            if (requestDepth && autoCalibrateDepth && !lockCalibration)
             {
                 if (depthTex == null)
                 {
@@ -579,6 +590,43 @@ public class SAMControllerLite : MonoBehaviour
             yield break;
         }
 
+        // Optional: build per-pixel min/max depth within the masked region from the current view's splats
+        ComputeBuffer perPixelDepth = null;
+        if (useSceneOcclusion && kGather >= 0 && kClear >= 0)
+        {
+            int pxCount = maskTex.width * maskTex.height;
+            perPixelDepth = new ComputeBuffer(pxCount * 2, sizeof(uint));
+            // Clear
+            maskSelectCS.SetInt("_MaskPixelCount", pxCount);
+            maskSelectCS.SetBuffer(kClear, "_PerPixelDepthRange", perPixelDepth);
+            int groupsClear = Mathf.Max(1, Mathf.CeilToInt(pxCount / 256f));
+            maskSelectCS.Dispatch(kClear, groupsClear, 1, 1);
+            // Gather
+            maskSelectCS.SetBuffer(kGather, "_SplatViewData", viewBuffer);
+            maskSelectCS.SetTexture(kGather, "_MaskTex", maskTex);
+            maskSelectCS.SetInt("_SplatCount", splatCount);
+            maskSelectCS.SetInts("_MaskSize", maskTex.width, maskTex.height);
+            int renderWg = sourceCamera ? Mathf.Max(1, sourceCamera.pixelWidth) : Mathf.Max(1, Screen.width);
+            int renderHg = sourceCamera ? Mathf.Max(1, sourceCamera.pixelHeight) : Mathf.Max(1, Screen.height);
+            maskSelectCS.SetFloats("_RenderViewportSize", renderWg, renderHg);
+            maskSelectCS.SetFloat("_Threshold", Mathf.Clamp01(maskThreshold));
+            maskSelectCS.SetInt("_UseROI", 0);
+            maskSelectCS.SetInt("_UseBoxGate", 0);
+            maskSelectCS.SetInt("_UseBoxGateBL", 0);
+            maskSelectCS.SetBuffer(kGather, "_PerPixelDepthRange", perPixelDepth);
+            // Scratch buffers to satisfy kernel signature
+            var depthRangeScratch = new ComputeBuffer(2, sizeof(uint), ComputeBufferType.Raw);
+            var depthHistScratch = new ComputeBuffer(256, sizeof(uint), ComputeBufferType.Raw);
+            maskSelectCS.SetBuffer(kGather, "_DepthRange", depthRangeScratch);
+            maskSelectCS.SetBuffer(kGather, "_DepthHistogram", depthHistScratch);
+            maskSelectCS.SetInt("_CollectHistogram", 0);
+            int groupsGather = Mathf.Max(1, Mathf.CeilToInt(splatCount / 128f));
+            maskSelectCS.Dispatch(kGather, groupsGather, 1, 1);
+            depthRangeScratch.Dispose();
+            depthHistScratch.Dispose();
+            // No CPU readback needed; buffer used by apply kernel directly
+        }
+
         // Configure and dispatch ApplyMaskSelection
         maskSelectCS.SetBuffer(kApply, "_SplatViewData", viewBuffer);
         maskSelectCS.SetTexture(kApply, "_MaskTex", maskTex);
@@ -625,10 +673,22 @@ public class SAMControllerLite : MonoBehaviour
         maskSelectCS.SetFloats("_RenderViewportSize", renderW, renderH);
         maskSelectCS.SetFloat("_Threshold", Mathf.Clamp01(maskThreshold));
         maskSelectCS.SetInt("_Mode", (int)applyMode);
+        maskSelectCS.SetInt("_AlwaysIncludeMask", alwaysIncludeMask ? 1 : 0);
+        maskSelectCS.SetInt("_UseFrontGate", useFrontGate ? 1 : 0);
         maskSelectCS.SetInt("_CollectHistogram", 0);
         maskSelectCS.SetInt("_UseDepthGate", 0);
-        maskSelectCS.SetInt("_UsePerPixelDepth", 0);
-        maskSelectCS.SetInt("_ApplyPerPixelOcclusion", 0);
+        if (useSceneOcclusion && perPixelDepth != null)
+        {
+            maskSelectCS.SetInt("_UsePerPixelDepth", 1);
+            maskSelectCS.SetInt("_ApplyPerPixelOcclusion", 1);
+            maskSelectCS.SetBuffer(kApply, "_PerPixelDepthRange", perPixelDepth);
+            maskSelectCS.SetFloat("_DepthOcclusionBias", Mathf.Max(0f, sceneOcclusionBias));
+        }
+        else
+        {
+            maskSelectCS.SetInt("_UsePerPixelDepth", 0);
+            maskSelectCS.SetInt("_ApplyPerPixelOcclusion", 0);
+        }
         maskSelectCS.SetInt("_SeedCount", 0);
         maskSelectCS.SetFloat("_DepthOcclusionBias", 0f);
         maskSelectCS.SetMatrix("_ObjectToWorld", gs.transform.localToWorldMatrix);
@@ -668,6 +728,7 @@ public class SAMControllerLite : MonoBehaviour
             Debug.Log("[SAM Lite] ApplyMask dispatch complete (mask+depth applied).");
         }
         yield return null;
+        if (perPixelDepth != null) { perPixelDepth.Dispose(); perPixelDepth = null; }
     }
 
     static void ComputeZoeBand(Texture2D maskTex, Texture2D depthTex, float thresh, float k, out float center, out float halfWidth)
@@ -836,10 +897,17 @@ public class SAMControllerLite : MonoBehaviour
             float bBest = useInvert ? fitB.b : fitA.b;
             float rmseBest = useInvert ? fitB.rmse : fitA.rmse;
 
-            // Apply
-            invertExternalDepth = useInvert;
-            depthScale = aBest;
-            depthBias = bBest;
+            // Smooth calibration across runs (prevents oscillation)
+            const float alpha = 0.35f; // EMA factor
+            if (invertExternalDepth != useInvert)
+            {
+                // Only flip polarity if improvement is significant (10%)
+                float rmseOther = useInvert ? fitA.rmse : fitB.rmse;
+                if (rmseBest < 0.9f * rmseOther)
+                    invertExternalDepth = useInvert;
+            }
+            depthScale = Mathf.Lerp(depthScale, aBest, alpha);
+            depthBias  = Mathf.Lerp(depthBias,  bBest, alpha);
             // Do NOT override user-set tolerance; only suggest a value for reference.
             float suggestedTol = Mathf.Clamp(2.0f * rmseBest, 0.01f, 0.06f);
             if (verboseLogs) Debug.Log($"[SAM Lite] Auto depth fit: invert={(useInvert?1:0)}, scale={aBest:F3}, bias={bBest:F3}, samples={n}, tol_suggest={suggestedTol:F3} (keeping depthTolerance={depthTolerance:F3})");

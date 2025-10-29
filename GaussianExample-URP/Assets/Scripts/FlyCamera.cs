@@ -10,9 +10,14 @@ public class FlyCameraLegacy : MonoBehaviour
     private float yaw;
     private float pitch;
     private bool lookEnabled = true;
+    private bool skipLookFrame = false; // discard first delta after relock
 
     void Start()
     {
+        // Sync yaw/pitch to current rotation
+        var e = transform.eulerAngles;
+        yaw = e.y;
+        pitch = e.x;
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
     }
@@ -23,6 +28,11 @@ public class FlyCameraLegacy : MonoBehaviour
         if (Input.GetMouseButtonDown(1)) // right click down
         {
             lookEnabled = true;
+            // Resync to current rotation to avoid jumps
+            var e = transform.eulerAngles;
+            yaw = e.y;
+            pitch = e.x;
+            skipLookFrame = true; // ignore first delta after lock
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
@@ -38,6 +48,13 @@ public class FlyCameraLegacy : MonoBehaviour
         {
             float mouseX = Input.GetAxis("Mouse X");
             float mouseY = Input.GetAxis("Mouse Y");
+
+            if (skipLookFrame)
+            {
+                // Discard the large recenter delta on the first frame
+                skipLookFrame = false;
+                mouseX = 0f; mouseY = 0f;
+            }
 
             yaw += mouseX * lookSensitivity;
             pitch -= mouseY * lookSensitivity;

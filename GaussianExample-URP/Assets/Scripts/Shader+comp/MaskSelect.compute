@@ -62,6 +62,8 @@ float    _ZoeCenter;          // ZoeDepth median inside mask
 float    _ZoeHalfWidth;       // k * IQR inside mask
 float    _MaxEccentricity;    // if >0, reject if major/minor > this
 float    _MaxAreaPx;          // if >0, reject if major*minor (approx area) exceeds this
+int      _AlwaysIncludeMask;  // if !=0, never drop splats that hit the SAM mask, even if depth gates fail
+int      _UseFrontGate;       // if !=0, use one-sided gate: keep only if depthNdc <= mapped + tol
 
 void SetBit(uint index)
 {
@@ -289,7 +291,8 @@ void ApplyMaskSelection(uint3 id : SV_DispatchThreadID)
     }
 
     int2 maskPix;
-    bool inMask = EvaluateMask(i, ndc, maskPix);
+    bool inMaskRaw = EvaluateMask(i, ndc, maskPix);
+    bool inMask = inMaskRaw;
 
     // Relative ZoeDepth band gate (object-only, no NDC mapping)
     if (inMask && _UseZoeBand != 0 && maskPix.x >= 0)
@@ -305,8 +308,20 @@ void ApplyMaskSelection(uint3 id : SV_DispatchThreadID)
         float extD = _DepthTex.Load(int3(maskPix, 0)).r;
         if (_DepthInvert != 0) extD = 1.0 - extD;
         float mapped = saturate(extD * _DepthScale + _DepthBias);
-        if (abs(depthNdc - mapped) > _DepthTolerance)
+        // Two modes: absolute-difference band or front-only (one-sided) gate
+        if (_UseFrontGate != 0)
+        {
+            if (depthNdc - mapped > _DepthTolerance)
+                inMask = false;
+        }
+        else if (abs(depthNdc - mapped) > _DepthTolerance)
             inMask = false;
+    }
+
+    // Absolute inclusion: if requested, keep any splat that hits the SAM mask
+    if (!inMask && _AlwaysIncludeMask != 0 && inMaskRaw && maskPix.x >= 0)
+    {
+        inMask = true;
     }
 
     if (inMask && _ApplyPerPixelOcclusion != 0 && maskPix.x >= 0)
@@ -387,7 +402,8 @@ void ApplyMaskSelectionLite(uint3 id : SV_DispatchThreadID)
     }
 
     int2 maskPix;
-    bool inMask = EvaluateMask(i, ndc, maskPix);
+    bool inMaskRaw = EvaluateMask(i, ndc, maskPix);
+    bool inMask = inMaskRaw;
     if (inMask && _UseZoeBand != 0 && maskPix.x >= 0)
     {
         float extD = _DepthTex.Load(int3(maskPix, 0)).r;
@@ -401,8 +417,19 @@ void ApplyMaskSelectionLite(uint3 id : SV_DispatchThreadID)
         float extD = _DepthTex.Load(int3(maskPix, 0)).r;
         if (_DepthInvert != 0) extD = 1.0 - extD;
         float mapped = saturate(extD * _DepthScale + _DepthBias);
-        if (abs(depthNdc - mapped) > _DepthTolerance)
+        if (_UseFrontGate != 0)
+        {
+            if (depthNdc - mapped > _DepthTolerance)
+                inMask = false;
+        }
+        else if (abs(depthNdc - mapped) > _DepthTolerance)
             inMask = false;
+    }
+
+    // Absolute inclusion: if requested, keep any splat that hits the SAM mask
+    if (!inMask && _AlwaysIncludeMask != 0 && inMaskRaw && maskPix.x >= 0)
+    {
+        inMask = true;
     }
 
     if (inMask)
