@@ -50,6 +50,22 @@ sysinfo.txt
 .DS_Store
 Thumbs.db
 
+# Python / Sidecar / AI
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env/
+env/
+*.egg-info/
+build/
+dist/
+sidecar/__pycache__/
+sidecar/venv/
+sidecar/.venv/
+sidecar/weight/
+
+
 # Crash reports and profiler data
 *.pidb.meta
 *.pdb.meta
