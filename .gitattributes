@@ -5,3 +5,4 @@
 *.exr filter=lfs diff=lfs merge=lfs -text
 *.tga filter=lfs diff=lfs merge=lfs -text
 *.pt filter=lfs diff=lfs merge=lfs -text
+UnityProject/Assets/OpenCV+Unity/Plugins/iOS/*.a filter=lfs diff=lfs merge=lfs -text
