@@ -40,8 +40,6 @@ public class ManagerScript : MonoBehaviour
     [SerializeField] private Camera mainCamera;
     [SerializeField] private string serverUrl = "https://unity.api.runsesmithy.dev/upload";
 
-    int userAge = SessionData.age;
-    System.Guid uuid = System.Guid.NewGuid();
 
 
     private readonly List<int> targetSequence = new()
@@ -53,9 +51,19 @@ public class ManagerScript : MonoBehaviour
     private CurrentTrial currentTrial;
     private readonly List<ClickRecord> clickRecords = new();
 
+
+    private int userAge;
+    private System.Guid uuid;
+
+    void Awake()
+    {
+        userAge = SessionData.age;
+        uuid = System.Guid.NewGuid();
+    }
+
     void Start()
     {
-    mainCamera ??= Camera.main ?? FindFirstObjectByType<Camera>();
+        mainCamera ??= Camera.main ?? FindFirstObjectByType<Camera>();
         HighlightNextTarget();
     }
 
@@ -127,7 +135,7 @@ public class ManagerScript : MonoBehaviour
         currentTrial.startMousePosition = Mouse.current.position.ReadValue();
         currentTrial.startTime = Time.time;
         currentTrial.misses = 0;
-;
+        ;
 
 
         foreach (var obj in FindObjectsByType<ClickableObject>(FindObjectsSortMode.None))
@@ -148,8 +156,14 @@ public class ManagerScript : MonoBehaviour
         sb.AppendLine("uuid,user_age,target_object_id,misses,movement_time,index_difficulty");
 
         foreach (var record in clickRecords)
-            sb.AppendLine($"{record.uuid},{record.userAge},{record.targetObjectId},{record.misses},{record.movementTime:F3},{record.indexDifficulty:F3}");
-
+            sb.AppendLine(string.Join(",",
+                record.uuid.ToString(),
+                record.userAge.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                record.targetObjectId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                record.misses.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                record.movementTime.ToString("F3", System.Globalization.CultureInfo.InvariantCulture),
+                record.indexDifficulty.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
+            ));
         byte[] bodyRaw = Encoding.UTF8.GetBytes(sb.ToString());
         Debug.Log($"Uploading Results ({bodyRaw.Length} bytes)");
 
