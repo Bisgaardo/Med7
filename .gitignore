@@ -113,3 +113,7 @@ UnityProject/.vs/UnityProject/v17/DocumentLayout.backup.json
 
 UnityProject/.vs/UnityProject/v17/DocumentLayout.json
 GaussianExample-URP/Assets/GaussianAssets/*.bytes
+
+weight/sam_vit_h_4b8939.pth
+
+GaussianExample-URP/Assets/GaussianAssets/
