@@ -463,7 +463,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1609192435}
   - component: {fileID: 1609192434}
-  - component: {fileID: 1609192437}
+  - component: {fileID: 1609192438}
   m_Layer: 0
   m_Name: GaussianSplats
   m_TagString: Untagged
@@ -520,7 +520,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: -166, y: 0, z: 0}
---- !u!114 &1609192437
+--- !u!114 &1609192438
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -529,51 +529,29 @@ MonoBehaviour:
   m_GameObject: {fileID: 1609192433}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d35fe9b984742ee4386a627a7fe5ccc4, type: 3}
+  m_Script: {fileID: 11500000, guid: a5cf6d42ac52e364d8fd63829d6af74b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   gs: {fileID: 1609192434}
   maskSelectCS: {fileID: 7200000, guid: 1f252e9c1c2a89c49867fa151abc0450, type: 3}
   sourceCamera: {fileID: 1462254337}
-  captureSize: 4096
+  captureSize: 2048
   maskThreshold: 0.8
-  applyMode: 0
-  selectionSize: 0
   applySelection: 1
-  alwaysIncludeMask: 0
-  useFrontGate: 0
-  useSceneOcclusion: 0
-  sceneOcclusionBias: 0.01
   positivePoints: []
-  useLocalPython: 1
   pythonExe: C:\UnityRepos\Med_7_Project\venv\Scripts\Python.exe
   pythonCli: C:\UnityRepos\Med_7_Project\src\cli_sam.py
   samCheckpoint: C:\UnityRepos\Med_7_Project\weight\sam_vit_h_4b8939.pth
   samModel: vit_h
-  samForceCpu: 0
-  openMaskAfterRun: 1
-  usePersistentWorker: 1
-  verboseLogs: 1
-  requestDepth: 0
-  zoeVariant: ZoeD_NK
+  zoeVariant: ' ZoeD_NK'
   zoeRoot: C:\UnityRepos\Med_7_Project\ZoeDepth-main
-  depthTolerance: 0.025
-  autoCalibrateDepth: 1
-  lockCalibration: 0
-  calibrationSamples: 4000
-  depthScale: 1
-  depthBias: 0
-  invertExternalDepth: 0
-  useZoeRelativeBand: 0
-  zoeBandK: 1
-  useEllipseProbe: 0
-  zoeForceCpu: 0
-  zoeMaxDim: 2048
-  maxEccentricity: 50
-  maxAreaPx: 2000
-  debugShowMask: 0
-  debugShowDepth: 0
-  debugOverlayAlpha: 0
+  zoeMaxDim: 1024
+  zoeDepthCullOffset: 0.01
+  zoeProbeHotkey: 112
+  probeDepthTolerance: 0.05
+  probeDepthPlaneSlackNdc: 0.5
+  probeDepthPlaneUseAutoSlack: 0
+  useProbeDepthPlaneCull: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

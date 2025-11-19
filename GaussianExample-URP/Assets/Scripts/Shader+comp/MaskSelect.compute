@@ -49,12 +49,12 @@ float    _DepthOcclusionBias;
 float2   _RenderViewportSize;
 float4x4 _ObjectToWorld;
 float    _SeedCullEps;
-int      _UseExtDepth;        // if !=0, compare splat depth to _DepthTex at mask pixel
-float    _DepthTolerance;     // allowed absolute difference between ndc.z and external depth
-float    _DepthScale;         // linear mapping scale for external depth
-float    _DepthBias;          // linear mapping bias for external depth
-int      _DepthInvert;        // if !=0, use (1-extDepth) before mapping
+int      _UseExtDepth;        // if !=0, compare splat ndc depth against Zoe depth
+float    _DepthTolerance;     // allowed NDC difference (front-only gate)
+float    _DepthScale;         // Zoe->NDC scale
+float    _DepthBias;          // Zoe->NDC bias
 int      _UseEllipseProbe;    // if 0, only test center pixel; if 1, sample ellipse neighborhood
+int      _UseCenterMask;      // if !=0, sample mask at splat center only
 int      _MaxRadiusPx;        // if >0, skip splats whose screen-space radius exceeds this
 int      _MinRadiusPx;        // if >0, skip splats smaller than this to avoid speckle
 int      _UseZoeBand;         // if !=0, gate by ZoeDepth relative band only (no NDC mapping)
@@ -63,7 +63,21 @@ float    _ZoeHalfWidth;       // k * IQR inside mask
 float    _MaxEccentricity;    // if >0, reject if major/minor > this
 float    _MaxAreaPx;          // if >0, reject if major*minor (approx area) exceeds this
 int      _AlwaysIncludeMask;  // if !=0, never drop splats that hit the SAM mask, even if depth gates fail
-int      _UseFrontGate;       // if !=0, use one-sided gate: keep only if depthNdc <= mapped + tol
+int      _UseFocusDepth;      // if !=0, gate by explicit focus NDC depth (from click)
+float    _FocusDepth;
+float    _FocusDepthTol;
+float    _FocusDepthTolWide;
+int      _ForceMaskOn;
+int      _FocusDepthUseZoe;
+float    _FocusDepthNorm;
+int      _UseProbeDepthClip;
+float    _ProbeDepthClip;
+float    _ProbeDepthClipTol;
+int      _UseProbeSphere;
+float4   _ProbeSphereCenter;
+float    _ProbeSphereRadius;
+int      _UseZoeDepthCull;
+float    _ZoeDepthCullOffset;
 
 void SetBit(uint index)
 {
@@ -95,7 +109,8 @@ void AccumulateDepth(float depth)
 
 bool EvaluateMaskAtUv(float2 uvBL, float2 uvTL, out int2 outPix)
 {
-    outPix = int2(-1, -1);
+    int2 pix = int2(-1, -1);
+    bool result = false;
 
     if (_UseROI != 0)
     {
@@ -104,7 +119,10 @@ bool EvaluateMaskAtUv(float2 uvBL, float2 uvTL, out int2 outPix)
         float x1 = _ROIMinMax.z;
         float y1 = _ROIMinMax.w;
         if (uvBL.x < x0 || uvBL.x > x1 || uvBL.y < y0 || uvBL.y > y1)
+        {
+            outPix = pix;
             return false;
+        }
         float2 sizeBL = float2(max(x1 - x0, 1e-5), max(y1 - y0, 1e-5));
         uvBL = (uvBL - float2(x0, y0)) / sizeBL;
         uvTL = float2(uvBL.x, 1.0 - uvBL.y);
@@ -113,29 +131,35 @@ bool EvaluateMaskAtUv(float2 uvBL, float2 uvTL, out int2 outPix)
     if (_UseBoxGate != 0)
     {
         if (uvTL.x < _GateRectTLBR.x || uvTL.y < _GateRectTLBR.y || uvTL.x > _GateRectTLBR.z || uvTL.y > _GateRectTLBR.w)
+        {
+            outPix = pix;
             return false;
+        }
     }
     if (_UseBoxGateBL != 0)
     {
         if (uvBL.x < _GateRectBL.x || uvBL.y < _GateRectBL.y || uvBL.x > _GateRectBL.z || uvBL.y > _GateRectBL.w)
+        {
+            outPix = pix;
             return false;
+        }
     }
 
     int2 basePix = int2(
         clamp((int)(uvTL.x * _MaskSize.x), 0, _MaskSize.x - 1),
         clamp((int)(uvTL.y * _MaskSize.y), 0, _MaskSize.y - 1)
     );
-    outPix = basePix;
+    pix = basePix;
 
     if (_MorphologyMode == 0 || _MorphRadiusPx <= 0)
     {
         float m = _MaskTex.Load(int3(basePix, 0)).r;
-        return (m >= _Threshold);
+        result = (m >= _Threshold);
     }
     else if (_MorphologyMode == 1)
     {
         [loop]
-        for (int dy = -_MorphRadiusPx; dy <= _MorphRadiusPx; ++dy)
+        for (int dy = -_MorphRadiusPx; dy <= _MorphRadiusPx && !result; ++dy)
         {
             int yy = clamp(basePix.y + dy, 0, _MaskSize.y - 1);
             [loop]
@@ -145,18 +169,18 @@ bool EvaluateMaskAtUv(float2 uvBL, float2 uvTL, out int2 outPix)
                 float m = _MaskTex.Load(int3(xx, yy, 0)).r;
                 if (m >= _Threshold)
                 {
-                    outPix = int2(xx, yy);
-                    return true;
+                    pix = int2(xx, yy);
+                    result = true;
+                    break;
                 }
             }
         }
-        outPix = basePix;
-        return false;
     }
     else
     {
+        result = true;
         [loop]
-        for (int dy = -_MorphRadiusPx; dy <= _MorphRadiusPx; ++dy)
+        for (int dy = -_MorphRadiusPx; dy <= _MorphRadiusPx && result; ++dy)
         {
             int yy = clamp(basePix.y + dy, 0, _MaskSize.y - 1);
             [loop]
@@ -166,14 +190,33 @@ bool EvaluateMaskAtUv(float2 uvBL, float2 uvTL, out int2 outPix)
                 float m = _MaskTex.Load(int3(xx, yy, 0)).r;
                 if (m < _Threshold)
                 {
-                    outPix = basePix;
-                    return false;
+                    pix = basePix;
+                    result = false;
+                    break;
                 }
             }
         }
-        outPix = basePix;
-        return true;
     }
+
+    outPix = pix;
+    return result;
+}
+
+bool SampleMaskAtCenter(float2 ndcXY, out int2 outPix)
+{
+    float2 uvBL = ndcXY * 0.5 + 0.5;
+    float2 uvTL = float2(uvBL.x, 1.0 - uvBL.y);
+    return EvaluateMaskAtUv(uvBL, uvTL, outPix);
+}
+
+float SampleZoeAtNdc(float2 ndcXY)
+{
+    float2 uvBL = ndcXY * 0.5 + 0.5;
+    int2 pix = int2(
+        clamp((int)(uvBL.x * _MaskSize.x), 0, _MaskSize.x - 1),
+        clamp((int)((1.0 - uvBL.y) * _MaskSize.y), 0, _MaskSize.y - 1)
+    );
+    return _DepthTex.Load(int3(pix, 0)).r;
 }
 
 bool EvaluateMaskAtNdc(float2 ndcXY, out int2 outPix)
@@ -187,7 +230,9 @@ bool EvaluateMaskAtNdc(float2 ndcXY, out int2 outPix)
 
 bool EvaluateMask(uint index, float3 ndc, out int2 outPix)
 {
-    // Always fetch view + apply geometric gates
+    int2 pix = int2(-1, -1);
+    bool result = false;
+
     SplatViewData view = _SplatViewData[index];
     float2 axis1 = view.axis1;
     float2 axis2 = view.axis2;
@@ -196,41 +241,39 @@ bool EvaluateMask(uint index, float3 ndc, out int2 outPix)
     float axisMagnitude = l1*l1 + l2*l2;
     if (axisMagnitude <= 1e-8)
     {
-        outPix = int2(-1, -1);
+        outPix = pix;
         return false;
     }
     float axisRadius = sqrt(axisMagnitude);
     float major = max(l1, l2);
     float minor = max(1e-6, min(l1, l2));
-    // Size gates
     if ((_MaxRadiusPx > 0 && axisRadius > (float)_MaxRadiusPx) ||
         (_MinRadiusPx > 0 && axisRadius < (float)_MinRadiusPx))
     {
-        outPix = int2(-1, -1);
+        outPix = pix;
         return false;
     }
-    // Eccentricity and area gates
     if (_MaxEccentricity > 0.0 && (major / minor) > _MaxEccentricity)
     {
-        outPix = int2(-1, -1);
+        outPix = pix;
         return false;
     }
     if (_MaxAreaPx > 0.0 && (major * minor) > _MaxAreaPx)
     {
-        outPix = int2(-1, -1);
+        outPix = pix;
         return false;
     }
 
-    // Fast path: center only
     if (_UseEllipseProbe == 0)
     {
-        return EvaluateMaskAtNdc(ndc.xy, outPix);
+        result = EvaluateMaskAtNdc(ndc.xy, pix);
+        outPix = pix;
+        return result;
     }
 
-    // Neighborhood probe
     if (_RenderViewportSize.x <= 0.0 || _RenderViewportSize.y <= 0.0)
     {
-        outPix = int2(-1, -1);
+        outPix = pix;
         return false;
     }
     float2 viewport = max(_RenderViewportSize, float2(1.0, 1.0));
@@ -249,7 +292,7 @@ bool EvaluateMask(uint index, float3 ndc, out int2 outPix)
     float adapt = saturate(axisRadius * 0.6f);
 
     [loop]
-    for (int ri = 0; ri < 4; ++ri)
+    for (int ri = 0; ri < 4 && !result; ++ri)
     {
         float ringScale = ringScales[ri] * (0.6f + 0.4f * adapt);
         [loop]
@@ -260,13 +303,16 @@ bool EvaluateMask(uint index, float3 ndc, out int2 outPix)
             float2 sampleNdc = ndc.xy + offset * invViewport;
             if (sampleNdc.x < -1.3 || sampleNdc.x > 1.3 || sampleNdc.y < -1.3 || sampleNdc.y > 1.3)
                 continue;
-            if (EvaluateMaskAtNdc(sampleNdc, outPix))
-                return true;
+            if (EvaluateMaskAtNdc(sampleNdc, pix))
+            {
+                result = true;
+                break;
+            }
         }
     }
 
-    outPix = int2(-1, -1);
-    return false;
+    outPix = pix;
+    return result;
 }
 
 [numthreads(128,1,1)]
@@ -290,36 +336,100 @@ void ApplyMaskSelection(uint3 id : SV_DispatchThreadID)
             return;
     }
 
+    bool forceMask = (_ForceMaskOn != 0);
     int2 maskPix;
-    bool inMaskRaw = EvaluateMask(i, ndc, maskPix);
-    bool inMask = inMaskRaw;
+    bool inMaskRaw;
+    bool inMask;
+    if (forceMask)
+    {
+        maskPix = int2(-1, -1);
+        inMaskRaw = true;
+        inMask = true;
+    }
+    else if (_UseCenterMask != 0)
+    {
+        inMaskRaw = SampleMaskAtCenter(ndc.xy, maskPix);
+        inMask = inMaskRaw;
+    }
+    else
+    {
+        inMaskRaw = EvaluateMask(i, ndc, maskPix);
+        inMask = inMaskRaw;
+    }
 
     // Relative ZoeDepth band gate (object-only, no NDC mapping)
-    if (inMask && _UseZoeBand != 0 && maskPix.x >= 0)
+    if (!forceMask && inMask && _UseZoeBand != 0 && maskPix.x >= 0)
     {
         float extD = _DepthTex.Load(int3(maskPix, 0)).r;
-        if (_DepthInvert != 0) extD = 1.0 - extD;
         if (abs(extD - _ZoeCenter) > _ZoeHalfWidth)
             inMask = false;
     }
 
-    if (inMask && _UseExtDepth != 0 && maskPix.x >= 0)
+    if (inMask && _UseZoeDepthCull != 0)
     {
-        float extD = _DepthTex.Load(int3(maskPix, 0)).r;
-        if (_DepthInvert != 0) extD = 1.0 - extD;
-        float mapped = saturate(extD * _DepthScale + _DepthBias);
-        // Two modes: absolute-difference band or front-only (one-sided) gate
-        if (_UseFrontGate != 0)
+        float zoeDepth = (maskPix.x >= 0) ? _DepthTex.Load(int3(maskPix, 0)).r : saturate(SampleZoeAtNdc(ndc.xy));
+        if (depthNdc - zoeDepth > _ZoeDepthCullOffset)
+            inMask = false;
+    }
+
+    if (inMask && _UseFocusDepth != 0)
+    {
+        if (_FocusDepthUseZoe != 0)
         {
-            if (depthNdc - mapped > _DepthTolerance)
+            float zoe = saturate(SampleZoeAtNdc(ndc.xy));
+            if (abs(zoe - _FocusDepthNorm) > _FocusDepthTolWide)
                 inMask = false;
         }
-        else if (abs(depthNdc - mapped) > _DepthTolerance)
+        else
+        {
+            if (depthNdc - _FocusDepth > _FocusDepthTolWide)
+                inMask = false;
+        }
+    }
+
+    if (inMask && _UseExtDepth != 0)
+    {
+        float extD = saturate(SampleZoeAtNdc(ndc.xy));
+        float mapped = extD * _DepthScale + _DepthBias;
+        if (depthNdc - mapped > _DepthTolerance)
+            inMask = false;
+    }
+
+    if (inMask && _UseProbeDepthClip != 0)
+    {
+        if (depthNdc - _ProbeDepthClip > _ProbeDepthClipTol)
+            inMask = false;
+    }
+
+    if (inMask && _UseProbeSphere != 0)
+    {
+        float3 localPosSphere = _SplatPos[i];
+        float3 worldPosSphere = mul(_ObjectToWorld, float4(localPosSphere, 1.0)).xyz;
+        float3 diff = worldPosSphere - _ProbeSphereCenter.xyz;
+        if (dot(diff, diff) > (_ProbeSphereRadius * _ProbeSphereRadius))
+            inMask = false;
+    }
+
+    if (inMask && _UseProbeDepthClip != 0)
+    {
+        if (depthNdc - _ProbeDepthClip > _ProbeDepthClipTol)
+            inMask = false;
+    }
+
+    bool sphereWorldComputed = false;
+    float3 sphereWorldPos = 0;
+    if (inMask && _UseProbeSphere != 0)
+    {
+        float3 localPosSphere = _SplatPos[i];
+        sphereWorldPos = mul(_ObjectToWorld, float4(localPosSphere, 1.0)).xyz;
+        sphereWorldComputed = true;
+        float3 diff = sphereWorldPos - _ProbeSphereCenter.xyz;
+        if (dot(diff, diff) > (_ProbeSphereRadius * _ProbeSphereRadius))
             inMask = false;
     }
 
     // Absolute inclusion: if requested, keep any splat that hits the SAM mask
-    if (!inMask && _AlwaysIncludeMask != 0 && inMaskRaw && maskPix.x >= 0)
+    if (!forceMask && !inMask && _AlwaysIncludeMask != 0 && inMaskRaw && maskPix.x >= 0)
     {
         inMask = true;
     }
@@ -331,12 +441,8 @@ void ApplyMaskSelection(uint3 id : SV_DispatchThreadID)
         uint minStored = _PerPixelDepthRange[baseIndex];
         if (minStored != 0xFFFFFFFFu)
         {
-            uint maxStored = _PerPixelDepthRange[baseIndex + 1u];
             float minDepth = minStored / 65535.0;
-            float maxDepth = (maxStored > minStored ? maxStored : minStored) / 65535.0;
-            float depthSpan = maxDepth - minDepth;
-            float tolerance = max(depthSpan, _DepthOcclusionBias * 0.5f);
-            tolerance += _DepthOcclusionBias * 2.0f;
+            float tolerance = max(_DepthOcclusionBias, 1e-4f);
             if (depthNdc - minDepth > tolerance)
                 inMask = false;
         }
@@ -345,7 +451,11 @@ void ApplyMaskSelection(uint3 id : SV_DispatchThreadID)
     if (inMask && _SeedCount > 0)
     {
         float3 localPos = _SplatPos[i];
-        float3 worldPos = mul(_ObjectToWorld, float4(localPos, 1.0)).xyz;
+        float3 worldPos;
+        if (sphereWorldComputed)
+            worldPos = sphereWorldPos;
+        else
+            worldPos = mul(_ObjectToWorld, float4(localPos, 1.0)).xyz;
         bool insideSeed = false;
         [loop]
         for (int s = 0; s < _SeedCount; ++s)
@@ -401,33 +511,64 @@ void ApplyMaskSelectionLite(uint3 id : SV_DispatchThreadID)
             return;
     }
 
+    bool forceMask = (_ForceMaskOn != 0);
     int2 maskPix;
-    bool inMaskRaw = EvaluateMask(i, ndc, maskPix);
-    bool inMask = inMaskRaw;
-    if (inMask && _UseZoeBand != 0 && maskPix.x >= 0)
+    bool inMaskRaw;
+    bool inMask;
+    if (forceMask)
+    {
+        maskPix = int2(-1, -1);
+        inMaskRaw = true;
+        inMask = true;
+    }
+    else if (_UseCenterMask != 0)
+    {
+        inMaskRaw = SampleMaskAtCenter(ndc.xy, maskPix);
+        inMask = inMaskRaw;
+    }
+    else
+    {
+        inMaskRaw = EvaluateMask(i, ndc, maskPix);
+        inMask = inMaskRaw;
+    }
+    if (!forceMask && inMask && _UseZoeBand != 0 && maskPix.x >= 0)
     {
         float extD = _DepthTex.Load(int3(maskPix, 0)).r;
-        if (_DepthInvert != 0) extD = 1.0 - extD;
         if (abs(extD - _ZoeCenter) > _ZoeHalfWidth)
             inMask = false;
     }
 
-    if (inMask && _UseExtDepth != 0 && maskPix.x >= 0)
+    if (inMask && _UseFocusDepth != 0)
     {
-        float extD = _DepthTex.Load(int3(maskPix, 0)).r;
-        if (_DepthInvert != 0) extD = 1.0 - extD;
-        float mapped = saturate(extD * _DepthScale + _DepthBias);
-        if (_UseFrontGate != 0)
+        if (_FocusDepthUseZoe != 0)
         {
-            if (depthNdc - mapped > _DepthTolerance)
+            float zoe = saturate(SampleZoeAtNdc(ndc.xy));
+            if (abs(zoe - _FocusDepthNorm) > _FocusDepthTolWide)
                 inMask = false;
         }
-        else if (abs(depthNdc - mapped) > _DepthTolerance)
+        else
+        {
+            if (depthNdc - _FocusDepth > _FocusDepthTolWide)
+                inMask = false;
+        }
+    }
+
+    if (inMask && _UseExtDepth != 0)
+    {
+        float extD = saturate(SampleZoeAtNdc(ndc.xy));
+        float mapped = extD * _DepthScale + _DepthBias;
+        if (depthNdc - mapped > _DepthTolerance)
+            inMask = false;
+    }
+
+    if (inMask && _UseProbeDepthClip != 0)
+    {
+        if (depthNdc - _ProbeDepthClip > _ProbeDepthClipTol)
             inMask = false;
     }
 
     // Absolute inclusion: if requested, keep any splat that hits the SAM mask
-    if (!inMask && _AlwaysIncludeMask != 0 && inMaskRaw && maskPix.x >= 0)
+    if (!forceMask && !inMask && _AlwaysIncludeMask != 0 && inMaskRaw && maskPix.x >= 0)
     {
         inMask = true;
     }
