@@ -9,15 +9,19 @@ using System.Text;
 class ClickRecord
 {
     public int userAge;
+    public string device;
+    public int computerTime;
     public System.Guid uuid;
     public int targetObjectId;    // Which object was clicked
     public int misses;      // Number of wrong clicks before this target
     public float movementTime; // Movement time (seconds)
     public float indexDifficulty; // Fitts' law index of difficulty
 
-    public ClickRecord(int userAge, System.Guid uuid, int targetObjectId, int misses, float movementTime, float indexDifficulty)
+    public ClickRecord(int userAge, System.Guid uuid, string device, int computerTime, int targetObjectId, int misses, float movementTime, float indexDifficulty)
     {
         this.userAge = userAge;
+        this.device = device;
+        this.computerTime = computerTime;
         this.uuid = uuid;
         this.targetObjectId = targetObjectId;
         this.misses = misses;
@@ -33,38 +37,60 @@ struct CurrentTrial
     public float startTime;
     public int misses;
     public ClickableObject targetObject;
+
 }
 
 public class ManagerScript : MonoBehaviour
 {
     [SerializeField] private Camera mainCamera;
     [SerializeField] private string serverUrl = "https://unity.api.runsesmithy.dev/upload";
+    [SerializeField] private UIManager uiManager;
 
 
 
-    private readonly List<int> targetSequence = new()
-    {
-        0, 14, 2, 4, 5, 6, 7, 8, 9, 10, 11
-    };
+
+    private List<int> targetSequence;
 
     private int currentTargetIndex;
     private CurrentTrial currentTrial;
     private readonly List<ClickRecord> clickRecords = new();
 
+    public int age;
+    public string device;
+    public int computerTime;
 
-    private int userAge;
     private System.Guid uuid;
+
+   private List<int> GenerateRandomSequence(int length, int objectCount)
+{
+    if (length > objectCount) throw new System.Exception("length exceeds unique pool");
+
+    List<int> pool = new();
+    for (int i = 0; i < objectCount; i++) pool.Add(i);
+
+    System.Random rand = new();
+
+    // Fisher–Yates
+    for (int i = pool.Count - 1; i > 0; i--)
+    {
+        int j = rand.Next(0, i + 1);
+        (pool[i], pool[j]) = (pool[j], pool[i]);
+    }
+
+    return pool.GetRange(0, length);
+}
+
 
     void Awake()
     {
-        userAge = SessionData.age;
         uuid = System.Guid.NewGuid();
+        targetSequence = GenerateRandomSequence(23, 23);
+        print("Generated target sequence: " + string.Join(", ", targetSequence));
     }
 
     void Start()
     {
         mainCamera ??= Camera.main ?? FindFirstObjectByType<Camera>();
-        HighlightNextTarget();
     }
 
     void Update()
@@ -96,7 +122,9 @@ public class ManagerScript : MonoBehaviour
             float movementDistance = Vector2.Distance(currentTrial.startMousePosition, targetPos);
 
             var record = new ClickRecord(
-                userAge: SessionData.age,
+                userAge:age,
+                device: device,
+                computerTime: computerTime,
                 uuid: uuid,
                 targetObjectId: clickedObject.objectId,
                 misses: currentTrial.misses,
@@ -124,10 +152,11 @@ public class ManagerScript : MonoBehaviour
     void OnSequenceComplete()
     {
         StartCoroutine(UploadResults());
+        uiManager.handleFinished(uuid.ToString());
         Debug.Log("Sequence complete. Uploading results...");
     }
 
-    void HighlightNextTarget()
+    public void HighlightNextTarget()
     {
         if (currentTargetIndex >= targetSequence.Count) return;
 
@@ -153,12 +182,14 @@ public class ManagerScript : MonoBehaviour
     IEnumerator UploadResults()
     {
         StringBuilder sb = new();
-        sb.AppendLine("uuid,user_age,target_object_id,misses,movement_time,index_difficulty");
+        sb.AppendLine("uuid,user_age,device,computer_time,target_object_id,misses,movement_time,index_difficulty");
 
         foreach (var record in clickRecords)
             sb.AppendLine(string.Join(",",
                 record.uuid.ToString(),
                 record.userAge.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                record.device.ToString(),
+                record.computerTime.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 record.targetObjectId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 record.misses.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 record.movementTime.ToString("F3", System.Globalization.CultureInfo.InvariantCulture),
