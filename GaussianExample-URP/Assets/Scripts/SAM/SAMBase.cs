@@ -3,6 +3,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
 using GaussianSplatting.Runtime;
@@ -47,17 +48,25 @@ public class SAMBase : MonoBehaviour
     [Range(128,2048)] public int zoeMaxDim = 512;
     [Tooltip("Additional NDC slack when comparing Zoe depth to splat depth.")]
     [Range(0f, 0.2f)] public float zoeDepthCullOffset = 0.01f;
+    [Tooltip("Use Zoe depth meta range when converting normalized values back to meters. Disable for a fixed mapping.")]
+    public bool useZoeDepthMetaRange = false;
+    [Tooltip("Fallback near depth (meters) used when Zoe meta range is disabled or invalid.")]
+    public float probeDepthRemapNear = 0.5f;
+    [Tooltip("Fallback far depth (meters) used when Zoe meta range is disabled or invalid.")]
+    public float probeDepthRemapFar = 8.0f;
     [Header("Zoe Depth Probe")]
     [Tooltip("Key that triggers a one-shot Zoe depth probe (highlights splats near Zoe depth at first positive point).")]
     public KeyCode zoeProbeHotkey = KeyCode.P;
-    [Tooltip("How close (in Zoe depth units) a splat must be to the probe depth to stay highlighted.")]
-    [Range(0.001f, 0.1f)] public float probeDepthTolerance = 0.02f;
+    [Tooltip("How close (in meters) a splat must be to the probe depth to stay highlighted.")]
+    [Range(0.0005f, 5f)] public float probeDepthTolerance = 0.02f;
     [Tooltip("Manual NDC slack for the CPU depth cull. Negative values push the clip plane forward.")]
     public float probeDepthPlaneSlackNdc = 0.02f;
     [Tooltip("When enabled, rely solely on Probe Depth Tolerance; disable to add the manual slack above (can be negative).")]
     public bool probeDepthPlaneUseAutoSlack = true;
     [Tooltip("Enable CPU depth plane culling after the probe runs.")]
     public bool useProbeDepthPlaneCull = true;
+    [Tooltip("Debug: when enabled, the probe depth cull clears EVERY selected splat regardless of depth.")]
+    public bool probeForceCullAll = false;
     [Header("Visualization")]
     [Tooltip("Draw the Zoe depth plane and clip band as gizmos in the Scene/Game views.")]
     public bool showProbeDepthPlane = true;
@@ -74,15 +83,20 @@ public class SAMBase : MonoBehaviour
     Ray m_ZoeProbeRay;
     float m_ProbeClipDepthNdc = 0f;
     float m_ProbeClipTolNdc = 0f;
+    Matrix4x4 m_LastProbeWorldToClip = Matrix4x4.identity;
     float m_ProbeForwardDepth = 0f;
     Texture2D m_LastMaskTex;
     Texture2D m_LastDepthTex;
     float m_LastZoeDepthCullOffset = -1f;
     bool m_ReapplyPending;
     float m_LastProbeDepthTolerance = -1f;
-    Coroutine m_ProbeCullCoroutine;
     float m_LastProbeCullTolNdc = 0f;
     float m_LastProbeCullForwardDepth = 0f;
+    bool m_ZoeDepthRangeValid = false;
+    float m_ZoeDepthMinMeters = 0.5f;
+    float m_ZoeDepthMaxMeters = 8f;
+    Coroutine m_ProbeCullCoroutine;
+    bool m_PendingProbeCullAfterReapply;
 
     static readonly FieldInfo s_ViewBufferField = typeof(GaussianSplatRenderer).GetField("m_GpuView", BindingFlags.NonPublic | BindingFlags.Instance);
     int kApply = -1;
@@ -134,22 +148,23 @@ public class SAMBase : MonoBehaviour
             RunProbeCull(logWarnings: true);
         }
 
-        if (!m_ReapplyPending &&
-            m_LastMaskTex != null &&
+        if (m_LastMaskTex != null &&
             m_LastDepthTex != null &&
             Mathf.Abs(m_LastZoeDepthCullOffset - zoeDepthCullOffset) > 1e-4f)
         {
             m_LastZoeDepthCullOffset = zoeDepthCullOffset;
-            m_ReapplyPending = true;
-            StartCoroutine(ReapplyCachedMask());
+            QueueMaskReapply(runProbeAfter: true);
         }
 
         if (Mathf.Abs(m_LastProbeDepthTolerance - probeDepthTolerance) > 1e-4f)
         {
             m_LastProbeDepthTolerance = probeDepthTolerance;
-            if (m_LastDepthTex && useProbeDepthPlaneCull)
+            if (useProbeDepthPlaneCull)
             {
-                RunProbeCull(logWarnings: false);
+                if (m_LastMaskTex && m_LastDepthTex)
+                    QueueMaskReapply(runProbeAfter: true);
+                else if (m_LastDepthTex)
+                    RunProbeCull(logWarnings: false);
             }
         }
     }
@@ -344,6 +359,7 @@ public class SAMBase : MonoBehaviour
             {
                 if (m_LastDepthTex) Destroy(m_LastDepthTex);
                 m_LastDepthTex = depthTex;
+                LoadZoeDepthMeta(depthPath);
                 depthTex = null;
                 RunProbeCull(logWarnings: false);
             }
@@ -591,10 +607,14 @@ public class SAMBase : MonoBehaviour
                 Debug.LogWarning("[SAM Lite] Zoe depth probe failed: missing Zoe depth metadata from worker response.");
             return;
         }
+        Matrix4x4 view = sourceCamera.worldToCameraMatrix;
+        Matrix4x4 proj = GL.GetGPUProjectionMatrix(sourceCamera.projectionMatrix, true);
+        Matrix4x4 worldToClip = proj * view;
+
         float clipTolNdc = ComputeProbeTolNdc(probeMetric, Mathf.Max(1e-4f, probeDepthTolerance));
         Debug.Log($"[SAM Lite] Zoe probe depth norm={m_ZoeProbeDepthValue:F3} metric={probeMetric:F2}m ndc={probeNdc:F3} tolNdc={clipTolNdc:F4}");
-
         m_ZoeProbeWorld = probeWorld;
+        m_LastProbeWorldToClip = worldToClip;
         m_ProbeClipDepthNdc = probeNdc;
         m_ProbeClipTolNdc = clipTolNdc;
         UpdateProbePlaneDepths(m_ProbeClipDepthNdc, clipTolNdc);
@@ -603,26 +623,167 @@ public class SAMBase : MonoBehaviour
             return;
 
         var sel = gs.GpuEditSelected;
-        var posBuffer = gs.GetPosBuffer();
-        if (sel == null || posBuffer == null)
+        if (sel == null)
         {
             if (logWarnings)
                 Debug.LogWarning("[SAM Lite] Probe cull skipped: selection or splat buffer unavailable.");
             return;
         }
+        int splatCount = gs.splatCount;
+        if (splatCount <= 0)
+        {
+            if (logWarnings)
+                Debug.LogWarning("[SAM Lite] Probe cull skipped: no splats available.");
+            return;
+        }
+        var posBuffer = gs.GetPosBuffer();
 
         float planeTolNdc = clipTolNdc;
         if (!probeDepthPlaneUseAutoSlack)
             planeTolNdc += probeDepthPlaneSlackNdc;
 
+        m_LastProbeCullTolNdc = planeTolNdc;
+        UpdateProbePlaneDepths(m_ProbeClipDepthNdc, planeTolNdc);
+        if (!gs.ApplyProbeDepthCullGPU(m_LastProbeWorldToClip, m_ProbeClipDepthNdc, planeTolNdc, probeForceCullAll))
+        {
+            if (logWarnings)
+                Debug.LogWarning("[SAM Lite] Probe cull skipped: GPU kernel unavailable.");
+        }
         if (m_ProbeCullCoroutine != null)
         {
             StopCoroutine(m_ProbeCullCoroutine);
             m_ProbeCullCoroutine = null;
         }
-        m_LastProbeCullTolNdc = planeTolNdc;
-        UpdateProbePlaneDepths(m_ProbeClipDepthNdc, planeTolNdc);
-        m_ProbeCullCoroutine = StartCoroutine(ApplyProbeDepthCullCPU(sel, posBuffer, gs.splatCount, sourceCamera, m_ZoeProbeWorld, m_ProbeClipDepthNdc, planeTolNdc));
+        m_ProbeCullCoroutine = StartCoroutine(ApplyProbeDepthCullCPU(sel, posBuffer, splatCount, sourceCamera, m_ZoeProbeWorld, m_ProbeClipDepthNdc, planeTolNdc));
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct SplatViewDataCPU
+    {
+        public Vector4 pos;
+        public Vector2 axis1;
+        public Vector2 axis2;
+        public uint colorLo;
+        public uint colorHi;
+    }
+
+    IEnumerator ApplyProbeDepthCullCPU(GraphicsBuffer selectedBits,
+                                       GraphicsBuffer posBuffer,
+                                       int splatCount,
+                                       Camera cam,
+                                       Vector3 centerWorld,
+                                       float probeDepthNdc,
+                                       float tolNdc)
+    {
+        try
+        {
+            if (selectedBits == null || gs == null || cam == null)
+                yield break;
+
+            var viewBuffer = s_ViewBufferField?.GetValue(gs) as GraphicsBuffer;
+            if (viewBuffer == null)
+            {
+                Debug.LogWarning("[SAM Lite] Probe depth CPU cull: view buffer unavailable.");
+                yield break;
+            }
+
+            int wordCount = selectedBits.count;
+            if (wordCount <= 0 || splatCount <= 0)
+                yield break;
+
+            uint[] bitData = new uint[wordCount];
+            try
+            {
+                selectedBits.GetData(bitData, 0, 0, wordCount);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[SAM Lite] Probe depth CPU cull: failed to read selection bits: {ex.Message}");
+                yield break;
+            }
+
+            int viewCount = Mathf.Min(viewBuffer.count, splatCount);
+            if (viewCount <= 0)
+                yield break;
+
+            var viewData = new SplatViewDataCPU[viewCount];
+            try
+            {
+                viewBuffer.GetData(viewData, 0, 0, viewCount);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[SAM Lite] Probe depth CPU cull: failed to read view buffer: {ex.Message}");
+                yield break;
+            }
+
+            float baseDepthNdc = Mathf.Clamp01(probeDepthNdc);
+            float clipDepthNdc = Mathf.Clamp01(probeDepthNdc + tolNdc);
+            bool modified = false;
+            int maxIndex = viewCount;
+
+            for (int i = 0; i < maxIndex; ++i)
+            {
+                int word = i >> 5;
+                if (word >= bitData.Length)
+                    break;
+                uint mask = 1u << (i & 31);
+                if ((bitData[word] & mask) == 0)
+                    continue;
+
+                if (probeForceCullAll)
+                {
+                    bitData[word] &= ~mask;
+                    modified = true;
+                    continue;
+                }
+
+                Vector4 clip = viewData[i].pos;
+                if (Mathf.Abs(clip.w) < 1e-5f)
+                    continue;
+
+                float depthNdc = Mathf.Clamp01(clip.z / clip.w * 0.5f + 0.5f);
+                if (clipDepthNdc >= baseDepthNdc)
+                {
+                    if (depthNdc > clipDepthNdc)
+                    {
+                        bitData[word] &= ~mask;
+                        modified = true;
+                    }
+                }
+                else
+                {
+                    if (depthNdc < clipDepthNdc)
+                    {
+                        bitData[word] &= ~mask;
+                        modified = true;
+                    }
+                }
+
+                if ((i & 0xFFFF) == 0 && i != 0)
+                    yield return null;
+            }
+
+            if (modified)
+            {
+                try
+                {
+                    selectedBits.SetData(bitData, 0, 0, wordCount);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[SAM Lite] Probe depth CPU cull: failed to write selection bits: {ex.Message}");
+                    yield break;
+                }
+
+                gs.UpdateEditCountsAndBounds();
+                Debug.Log($"[SAM Lite] Probe depth CPU cull removed splats behind ndc {probeDepthNdc:F4} tol {tolNdc:F5}, forceAll={probeForceCullAll}.");
+            }
+        }
+        finally
+        {
+            m_ProbeCullCoroutine = null;
+        }
     }
 
     bool TryGetZoeDepthAtPoint(Texture2D depthTex, Vector2 pt, out float zoeDepth)
@@ -644,7 +805,9 @@ public class SAMBase : MonoBehaviour
         if (!sourceCamera)
             return false;
         float clamped = Mathf.Clamp01(zoeDepthNorm);
-        metricDepth = Mathf.Lerp(0.5f, 8f, clamped);
+        float depthNear = (useZoeDepthMetaRange && m_ZoeDepthRangeValid) ? m_ZoeDepthMinMeters : Mathf.Max(0.01f, probeDepthRemapNear);
+        float depthFar = (useZoeDepthMetaRange && m_ZoeDepthRangeValid) ? m_ZoeDepthMaxMeters : Mathf.Max(depthNear + 0.01f, probeDepthRemapFar);
+        metricDepth = Mathf.Lerp(depthNear, depthFar, clamped);
         m_ZoeProbeRay = sourceCamera.ViewportPointToRay(new Vector3(pt.x, pt.y, 0f));
         worldPos = m_ZoeProbeRay.GetPoint(metricDepth);
         ndcDepth = WorldToNdc01(worldPos);
@@ -674,78 +837,7 @@ public class SAMBase : MonoBehaviour
         Vector3 farPos = m_ZoeProbeRay.GetPoint(metricDepth + toleranceMeters);
         float ndcBase = WorldToNdc01(basePos);
         float ndcFar = WorldToNdc01(farPos);
-        return Mathf.Abs(ndcFar - ndcBase);
-    }
-
-    IEnumerator ApplyProbeDepthCullCPU(GraphicsBuffer selectedBits, GraphicsBuffer posBuffer, int splatCount, Camera cam, Vector3 centerWorld, float probeDepthNdc, float tolNdc)
-    {
-        try
-        {
-            if (selectedBits == null || posBuffer == null || cam == null)
-                yield break;
-            int wordCount = selectedBits.count;
-            if (wordCount <= 0 || splatCount <= 0)
-                yield break;
-            int vectorCount = Mathf.Min(posBuffer.count, splatCount);
-            if (vectorCount <= 0)
-                yield break;
-            uint[] bitData = new uint[wordCount];
-            Vector3[] localPositions = new Vector3[vectorCount];
-            try
-            {
-                selectedBits.GetData(bitData, 0, 0, wordCount);
-                posBuffer.GetData(localPositions, 0, 0, vectorCount);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[SAM Lite] Probe depth CPU cull failed: {ex.Message}");
-                yield break;
-            }
-            Matrix4x4 l2w = gs ? gs.transform.localToWorldMatrix : Matrix4x4.identity;
-            Matrix4x4 view = cam.worldToCameraMatrix;
-            Matrix4x4 proj = GL.GetGPUProjectionMatrix(cam.projectionMatrix, true);
-            Matrix4x4 viewProj = proj * view;
-            float clipThreshold = Mathf.Clamp01(probeDepthNdc + tolNdc) * 2f - 1f;
-            bool modified = false;
-            int maxIndex = Mathf.Min(localPositions.Length, splatCount);
-            for (int i = 0; i < maxIndex; ++i)
-            {
-                int word = i >> 5;
-                uint mask = 1u << (i & 31);
-                if (word >= bitData.Length)
-                    break;
-                if ((bitData[word] & mask) == 0)
-                    continue;
-                Vector3 worldPos = l2w.MultiplyPoint3x4(localPositions[i]);
-                Vector4 clip = viewProj * new Vector4(worldPos.x, worldPos.y, worldPos.z, 1f);
-                if (Mathf.Abs(clip.w) < 1e-5f)
-                    continue;
-                float ndcZ = clip.z / clip.w;
-                if (ndcZ > clipThreshold)
-                {
-                    bitData[word] &= ~mask;
-                    modified = true;
-                }
-                if ((i & 0xFFFF) == 0)
-                    yield return null;
-            }
-            if (modified)
-                selectedBits.SetData(bitData, 0, 0, wordCount);
-            gs.UpdateEditCountsAndBounds();
-            if (modified)
-                Debug.Log($"[SAM Lite] Probe depth CPU cull removed splats behind ndc {probeDepthNdc:F4} tol {tolNdc:F5}.");
-        }
-        finally
-        {
-            m_ProbeCullCoroutine = null;
-        }
-    }
-
-    void UpdateProbePlaneDepths(float baseNdc, float tolNdc)
-    {
-        TryGetForwardDepthFromNdc(baseNdc, out m_ProbeForwardDepth);
-        float targetNdc = Mathf.Clamp01(baseNdc + tolNdc);
-        TryGetForwardDepthFromNdc(targetNdc, out m_LastProbeCullForwardDepth);
+        return ndcFar - ndcBase;
     }
 
     void OnDrawGizmos()
@@ -770,9 +862,8 @@ public class SAMBase : MonoBehaviour
         Vector3[] corners = s_GizmoCorners;
         sourceCamera.CalculateFrustumCorners(new Rect(0f, 0f, 1f, 1f), distance, Camera.MonoOrStereoscopicEye.Mono, corners);
         for (int i = 0; i < 4; ++i)
-        {
             corners[i] = sourceCamera.transform.TransformPoint(corners[i]);
-        }
+
         Color outline = new Color(color.r, color.g, color.b, Mathf.Clamp01(color.a));
 #if UNITY_EDITOR
         Color fill = new Color(color.r, color.g, color.b, Mathf.Clamp01(color.a * 0.6f));
@@ -786,7 +877,6 @@ public class SAMBase : MonoBehaviour
         Gizmos.DrawLine(corners[3], corners[0]);
 #endif
 
-        // Draw probe sphere at positive point intersection if available
         if (positivePoints != null && positivePoints.Count > 0)
         {
             Vector2 vp = positivePoints[0];
@@ -795,12 +885,23 @@ public class SAMBase : MonoBehaviour
         }
     }
 
-    bool TryGetForwardDepthFromNdc(float ndcDepth01, out float forwardDepth)
+    void UpdateProbePlaneDepths(float baseNdc, float tolNdc)
     {
-        forwardDepth = 0f;
+        m_ProbeClipDepthNdc = baseNdc;
+        m_LastProbeCullTolNdc = tolNdc;
+        if (!TryGetProbePlaneDistance(baseNdc, out m_ProbeForwardDepth))
+            m_ProbeForwardDepth = 0f;
+        float clipNdc = Mathf.Clamp01(baseNdc + tolNdc);
+        if (!TryGetProbePlaneDistance(clipNdc, out m_LastProbeCullForwardDepth))
+            m_LastProbeCullForwardDepth = m_ProbeForwardDepth;
+    }
+
+    bool TryGetProbePlaneDistance(float ndcDepth01, out float distance)
+    {
+        distance = 0f;
         if (!sourceCamera)
             return false;
-        Matrix4x4 proj = sourceCamera.projectionMatrix;
+        Matrix4x4 proj = GL.GetGPUProjectionMatrix(sourceCamera.projectionMatrix, true);
         Matrix4x4 invProj = proj.inverse;
         float clipZ = Mathf.Clamp(ndcDepth01 * 2f - 1f, -0.9999f, 0.9999f);
         Vector4 clip = new Vector4(0f, 0f, clipZ, 1f);
@@ -808,11 +909,93 @@ public class SAMBase : MonoBehaviour
         if (Mathf.Abs(view.w) < 1e-6f)
             return false;
         view /= view.w;
-        forwardDepth = Mathf.Abs(view.z);
-        return forwardDepth > 0f;
+        distance = Mathf.Abs(view.z);
+        return distance > 0f;
+    }
+
+    [Serializable]
+    class ZoeDepthMeta
+    {
+        public float depth_min;
+        public float depth_max;
+        public float depth_range;
+    }
+
+    void LoadZoeDepthMeta(string depthPngPath)
+    {
+        m_ZoeDepthRangeValid = false;
+        m_ZoeDepthMinMeters = probeDepthRemapNear;
+        m_ZoeDepthMaxMeters = probeDepthRemapFar;
+        if (!useZoeDepthMetaRange)
+            return;
+        string metaPath = GetDepthMetaPath(depthPngPath);
+        if (string.IsNullOrEmpty(metaPath) || !System.IO.File.Exists(metaPath))
+            return;
+        try
+        {
+            string json = System.IO.File.ReadAllText(metaPath);
+            if (string.IsNullOrEmpty(json))
+                return;
+            var meta = JsonUtility.FromJson<ZoeDepthMeta>(json);
+            if (meta == null)
+                return;
+            float min = meta.depth_min;
+            float max = meta.depth_max;
+            float range = meta.depth_range;
+            if (max <= min && range > 1e-5f)
+                max = min + range;
+            if (max > min + 1e-4f)
+            {
+                m_ZoeDepthMinMeters = Mathf.Max(0.01f, min);
+                m_ZoeDepthMaxMeters = Mathf.Max(m_ZoeDepthMinMeters + 0.01f, max);
+                m_ZoeDepthRangeValid = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[SAM Lite] Failed to parse Zoe depth meta: {ex.Message}");
+        }
+    }
+
+    string GetDepthMetaPath(string depthPngPath)
+    {
+        if (string.IsNullOrEmpty(depthPngPath))
+            return null;
+        string dir = System.IO.Path.GetDirectoryName(depthPngPath);
+        string file = System.IO.Path.GetFileNameWithoutExtension(depthPngPath);
+        if (string.IsNullOrEmpty(file))
+            return null;
+        return string.IsNullOrEmpty(dir)
+            ? file + "_meta.json"
+            : System.IO.Path.Combine(dir, file + "_meta.json");
+    }
+
+    void OnValidate()
+    {
+        probeDepthRemapNear = Mathf.Max(0.01f, probeDepthRemapNear);
+        probeDepthRemapFar = Mathf.Max(probeDepthRemapNear + 0.01f, probeDepthRemapFar);
     }
 
     static readonly Vector3[] s_GizmoCorners = new Vector3[4];
+
+    void QueueMaskReapply(bool runProbeAfter)
+    {
+        if (runProbeAfter)
+            m_PendingProbeCullAfterReapply = true;
+
+        if (m_ReapplyPending)
+            return;
+
+        if (!m_LastMaskTex || !m_LastDepthTex)
+        {
+            if (runProbeAfter)
+                RunProbeCull(logWarnings: false);
+            return;
+        }
+
+        m_ReapplyPending = true;
+        StartCoroutine(ReapplyCachedMask());
+    }
 
 
     IEnumerator ReapplyCachedMask()
@@ -820,5 +1003,11 @@ public class SAMBase : MonoBehaviour
         if (m_LastMaskTex && m_LastDepthTex)
             yield return ApplyMaskToSelection(m_LastMaskTex, m_LastDepthTex);
         m_ReapplyPending = false;
+        if (m_PendingProbeCullAfterReapply)
+        {
+            m_PendingProbeCullAfterReapply = false;
+            if (useProbeDepthPlaneCull)
+                RunProbeCull(logWarnings: false);
+        }
     }
 }

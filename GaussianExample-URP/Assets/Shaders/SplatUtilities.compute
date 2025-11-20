@@ -27,6 +27,7 @@
 #pragma kernel Upsweep
 #pragma kernel Scan
 #pragma kernel Downsweep
+#pragma kernel CSProbeDepthCull
 
 // GPU sorting needs wave ops
 #pragma require wavebasic
@@ -44,6 +45,9 @@ float4x4 _MatrixMV;
 float4 _VecScreenParams;
 float4 _VecWorldSpaceCameraPos;
 int _SelectionMode;
+float _ProbeDepthClip;
+float _ProbeDepthClipTol;
+int _ProbeCullForceAll;
 
 RWStructuredBuffer<uint> _SplatSortDistances;
 RWStructuredBuffer<uint> _SplatSortKeys;
@@ -181,6 +185,51 @@ void CSCalcViewData (uint3 id : SV_DispatchThreadID)
     }
     
     _SplatViewData[idx] = view;
+}
+
+[numthreads(GROUP_SIZE,1,1)]
+void CSProbeDepthCull(uint3 id : SV_DispatchThreadID)
+{
+    uint idx = id.x;
+    if (idx >= _SplatCount)
+        return;
+
+    uint wordIdx = idx >> 5;
+    uint bit = 1u << (idx & 31);
+    uint selected = _SplatSelectedBits.Load(wordIdx * 4);
+    if ((selected & bit) == 0)
+        return;
+
+    float3 posLocal = LoadSplatPos(idx);
+    float3 worldPos = mul(_MatrixObjectToWorld, float4(posLocal, 1)).xyz;
+    float4 clip = mul(_WorldToClip, float4(worldPos, 1));
+    if (abs(clip.w) < 1e-5f)
+        return;
+
+    float ndc = clip.z / clip.w;
+    float depth01 = saturate(ndc * 0.5f + 0.5f);
+    if (_ProbeCullForceAll != 0)
+    {
+        _SplatSelectedBits.InterlockedAnd(wordIdx * 4, ~bit);
+        return;
+    }
+
+    float baseDepth = saturate(_ProbeDepthClip);
+    float clipDepth = saturate(_ProbeDepthClip + _ProbeDepthClipTol);
+    if (clipDepth >= baseDepth)
+    {
+        if (depth01 > clipDepth)
+        {
+            _SplatSelectedBits.InterlockedAnd(wordIdx * 4, ~bit);
+        }
+    }
+    else
+    {
+        if (depth01 < clipDepth)
+        {
+            _SplatSelectedBits.InterlockedAnd(wordIdx * 4, ~bit);
+        }
+    }
 }
 
 
@@ -692,4 +741,3 @@ void CSCopySplats (uint3 id : SV_DispatchThreadID)
         _CopyDstEditDeleted.InterlockedOr(dstWordIdx * 4, 1u << dstBitIdx);
     }
 }
-

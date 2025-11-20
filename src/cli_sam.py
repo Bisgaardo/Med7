@@ -1,5 +1,10 @@
 import argparse, os, sys, io, base64, json, time
 import sys
+import os, sys
+print("Running file:", __file__)
+print("Working dir:", os.getcwd())
+print("sys.path[0:4]:", sys.path[0:4])
+
 sys.path.insert(0, r"C:\UnityRepos\Med_7_Project\ZoeDepth-main")
 
 from typing import List, Tuple

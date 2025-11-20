@@ -547,11 +547,18 @@ MonoBehaviour:
   zoeRoot: C:\UnityRepos\Med_7_Project\ZoeDepth-main
   zoeMaxDim: 1024
   zoeDepthCullOffset: 0.01
+  useZoeDepthMetaRange: 1
+  probeDepthRemapNear: 0.5
+  probeDepthRemapFar: 8
   zoeProbeHotkey: 112
-  probeDepthTolerance: 0.05
-  probeDepthPlaneSlackNdc: 0.5
+  probeDepthTolerance: 0.45
+  probeDepthPlaneSlackNdc: 0
   probeDepthPlaneUseAutoSlack: 0
   useProbeDepthPlaneCull: 1
+  probeForceCullAll: 0
+  showProbeDepthPlane: 1
+  basePlaneColor: {r: 0, g: 0.8, b: 1, a: 0.35}
+  clipPlaneColor: {r: 1, g: 0.2, b: 0.2, a: 0.45}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

@@ -358,6 +358,9 @@ namespace GaussianSplatting.Runtime
             public static readonly int SelectionDeltaRot = Shader.PropertyToID("_SelectionDeltaRot");
             public static readonly int SplatCutoutsCount = Shader.PropertyToID("_SplatCutoutsCount");
             public static readonly int SplatCutouts = Shader.PropertyToID("_SplatCutouts");
+            public static readonly int ProbeDepthClip = Shader.PropertyToID("_ProbeDepthClip");
+            public static readonly int ProbeDepthClipTol = Shader.PropertyToID("_ProbeDepthClipTol");
+            public static readonly int ProbeCullForceAll = Shader.PropertyToID("_ProbeCullForceAll");
             public static readonly int SelectionMode = Shader.PropertyToID("_SelectionMode");
             public static readonly int SplatPosMouseDown = Shader.PropertyToID("_SplatPosMouseDown");
             public static readonly int SplatOtherMouseDown = Shader.PropertyToID("_SplatOtherMouseDown");
@@ -389,6 +392,7 @@ namespace GaussianSplatting.Runtime
             ScaleSelection,
             ExportData,
             CopySplats,
+            CSProbeDepthCull,
         }
 
         public bool HasValidAsset =>
@@ -797,46 +801,69 @@ namespace GaussianSplatting.Runtime
             return math.asfloat(v ^ mask);
         }
 
-public void UpdateEditCountsAndBounds()
-{
-    if (m_GpuEditSelected == null)
-    {
-        editSelectedSplats = 0;
-        editDeletedSplats = 0;
-        editCutSplats = 0;
-        editModified = false;
-        editSelectedBounds = default;
-        return;
-    }
+        public void UpdateEditCountsAndBounds()
+        {
+            if (m_GpuEditSelected == null)
+            {
+                editSelectedSplats = 0;
+                editDeletedSplats = 0;
+                editCutSplats = 0;
+                editModified = false;
+                editSelectedBounds = default;
+                return;
+            }
 
-    m_CSSplatUtilities.SetBuffer((int)KernelIndices.InitEditData, Props.DstBuffer, m_GpuEditCountsBounds);
-    m_CSSplatUtilities.Dispatch((int)KernelIndices.InitEditData, 1, 1, 1);
+            m_CSSplatUtilities.SetBuffer((int)KernelIndices.InitEditData, Props.DstBuffer, m_GpuEditCountsBounds);
+            m_CSSplatUtilities.Dispatch((int)KernelIndices.InitEditData, 1, 1, 1);
 
-    using CommandBuffer cmb = new CommandBuffer();
-    SetAssetDataOnCS(cmb, KernelIndices.UpdateEditData);
-    cmb.SetComputeBufferParam(m_CSSplatUtilities, (int)KernelIndices.UpdateEditData, Props.DstBuffer, m_GpuEditCountsBounds);
-    cmb.SetComputeIntParam(m_CSSplatUtilities, Props.BufferSize, m_GpuEditSelected.count);
-    m_CSSplatUtilities.GetKernelThreadGroupSizes((int)KernelIndices.UpdateEditData, out uint gsX, out _, out _);
-    cmb.DispatchCompute(m_CSSplatUtilities, (int)KernelIndices.UpdateEditData, (int)((m_GpuEditSelected.count+gsX-1)/gsX), 1, 1);
-    Graphics.ExecuteCommandBuffer(cmb);
+            using CommandBuffer cmb = new CommandBuffer();
+            SetAssetDataOnCS(cmb, KernelIndices.UpdateEditData);
+            cmb.SetComputeBufferParam(m_CSSplatUtilities, (int)KernelIndices.UpdateEditData, Props.DstBuffer, m_GpuEditCountsBounds);
+            cmb.SetComputeIntParam(m_CSSplatUtilities, Props.BufferSize, m_GpuEditSelected.count);
+            m_CSSplatUtilities.GetKernelThreadGroupSizes((int)KernelIndices.UpdateEditData, out uint gsX, out _, out _);
+            cmb.DispatchCompute(m_CSSplatUtilities, (int)KernelIndices.UpdateEditData, (int)((m_GpuEditSelected.count + gsX - 1) / gsX), 1, 1);
+            Graphics.ExecuteCommandBuffer(cmb);
 
-    uint[] res = new uint[m_GpuEditCountsBounds.count];
-    m_GpuEditCountsBounds.GetData(res);
+            uint[] res = new uint[m_GpuEditCountsBounds.count];
+            m_GpuEditCountsBounds.GetData(res);
 
-    // ✅ Explicit casts here
-    editSelectedSplats = (int)res[0];
-    editDeletedSplats  = (int)res[1];
-    editCutSplats      = (int)res[2];
+            editSelectedSplats = (int)res[0];
+            editDeletedSplats = (int)res[1];
+            editCutSplats = (int)res[2];
 
-    Vector3 min = new Vector3(SortableUintToFloat(res[3]), SortableUintToFloat(res[4]), SortableUintToFloat(res[5]));
-    Vector3 max = new Vector3(SortableUintToFloat(res[6]), SortableUintToFloat(res[7]), SortableUintToFloat(res[8]));
+            Vector3 min = new Vector3(SortableUintToFloat(res[3]), SortableUintToFloat(res[4]), SortableUintToFloat(res[5]));
+            Vector3 max = new Vector3(SortableUintToFloat(res[6]), SortableUintToFloat(res[7]), SortableUintToFloat(res[8]));
 
-    Bounds bounds = default;
-    bounds.SetMinMax(min, max);
-    if (bounds.extents.sqrMagnitude < 0.01)
-        bounds.extents = new Vector3(0.1f, 0.1f, 0.1f);
-    editSelectedBounds = bounds;
-}
+            Bounds bounds = default;
+            bounds.SetMinMax(min, max);
+            if (bounds.extents.sqrMagnitude < 0.01)
+                bounds.extents = new Vector3(0.1f, 0.1f, 0.1f);
+            editSelectedBounds = bounds;
+        }
+
+        public bool ApplyProbeDepthCullGPU(Matrix4x4 worldToClip, float probeDepthNdc, float tolNdc, bool forceAll = false)
+        {
+            if (m_CSSplatUtilities == null || m_GpuEditSelected == null || m_GpuPosData == null)
+                return false;
+
+            using CommandBuffer cmb = new CommandBuffer { name = "GaussianSplat.ProbeDepthCull" };
+            SetAssetDataOnCS(cmb, KernelIndices.CSProbeDepthCull);
+
+            Matrix4x4 objToWorld = transform.localToWorldMatrix;
+            cmb.SetComputeMatrixParam(m_CSSplatUtilities, Props.MatrixObjectToWorld, objToWorld);
+            cmb.SetComputeMatrixParam(m_CSSplatUtilities, Props.WorldToClip, worldToClip);
+            cmb.SetComputeFloatParam(m_CSSplatUtilities, Props.ProbeDepthClip, Mathf.Clamp01(probeDepthNdc));
+            cmb.SetComputeFloatParam(m_CSSplatUtilities, Props.ProbeDepthClipTol, tolNdc);
+            cmb.SetComputeIntParam(m_CSSplatUtilities, Props.ProbeCullForceAll, forceAll ? 1 : 0);
+
+            m_CSSplatUtilities.GetKernelThreadGroupSizes((int)KernelIndices.CSProbeDepthCull, out uint gsX, out _, out _);
+            int groups = Mathf.Max(1, (m_SplatCount + (int)gsX - 1) / (int)gsX);
+            cmb.DispatchCompute(m_CSSplatUtilities, (int)KernelIndices.CSProbeDepthCull, groups, 1, 1);
+            Graphics.ExecuteCommandBuffer(cmb);
+
+            UpdateEditCountsAndBounds();
+            return true;
+        }
 
 
         void UpdateCutoutsBuffer()
