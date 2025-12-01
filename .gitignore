@@ -117,3 +117,5 @@ GaussianExample-URP/Assets/GaussianAssets/*.bytes
 weight/sam_vit_h_4b8939.pth
 
 GaussianExample-URP/Assets/GaussianAssets/
+
+GaussianExample-URP/Assets/DebugMasks/

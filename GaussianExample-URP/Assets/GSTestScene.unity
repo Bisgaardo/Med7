@@ -387,8 +387,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1462254335}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.039000556, y: -0.42679158, z: 0.0026308782, w: -0.90350485}
-  m_LocalPosition: {x: -3.0026817, y: -0.82006466, z: -2.501085}
+  m_LocalRotation: {x: -0.16590647, y: -0.2766055, z: 0.07349874, w: -0.94369614}
+  m_LocalPosition: {x: -0.7313697, y: 0.4894722, z: -2.8891864}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -484,6 +484,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Asset: {fileID: 11400000, guid: 79195371cf6d54143b0d5d0f8c8590e2, type: 2}
+  m_Assets:
+  - {fileID: 11400000, guid: 79195371cf6d54143b0d5d0f8c8590e2, type: 2}
+  m_ActiveAssetIndex: 0
   m_RenderOrder: 0
   m_SplatScale: 1
   m_OpacityScale: 1
@@ -492,7 +495,8 @@ MonoBehaviour:
   m_SortNthFrame: 1
   m_RenderMode: 0
   m_PointDisplaySize: 1
-  m_Cutouts: []
+  m_Cutouts:
+  - {fileID: 0}
   m_ShaderSplats: {fileID: 4800000, guid: ed800126ae8844a67aad1974ddddd59c, type: 3}
   m_ShaderComposite: {fileID: 4800000, guid: 7e184af7d01193a408eb916d8acafff9, type: 3}
   m_ShaderDebugPoints: {fileID: 4800000, guid: b44409fc67214394f8f47e4e2648425e, type: 3}
@@ -551,12 +555,14 @@ MonoBehaviour:
   probeDepthRemapNear: 0.5
   probeDepthRemapFar: 8
   zoeProbeHotkey: 112
-  probeDepthTolerance: 0.45
+  probeDepthTolerance: 0.6
   probeDepthPlaneSlackNdc: 0
   probeDepthPlaneUseAutoSlack: 0
   useProbeDepthPlaneCull: 1
+  allowPositivePointClick: 1
+  extraRenderers: []
   probeForceCullAll: 0
-  showProbeDepthPlane: 1
+  showProbeDepthPlane: 0
   basePlaneColor: {r: 0, g: 0.8, b: 1, a: 0.35}
   clipPlaneColor: {r: 1, g: 0.2, b: 0.2, a: 0.45}
 --- !u!1660057539 &9223372036854775807
@@ -565,5 +571,5 @@ SceneRoots:
   m_Roots:
   - {fileID: 231550835}
   - {fileID: 1609192435}
-  - {fileID: 1462254338}
   - {fileID: 170001803}
+  - {fileID: 1462254338}

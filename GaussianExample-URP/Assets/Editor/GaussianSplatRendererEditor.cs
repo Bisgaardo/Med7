@@ -35,8 +35,11 @@ namespace GaussianSplatting.Editor
         SerializedProperty m_PropShaderDebugPoints;
         SerializedProperty m_PropShaderDebugBoxes;
         SerializedProperty m_PropCSSplatUtilities;
+        SerializedProperty m_PropAssets;
+        SerializedProperty m_PropActiveAssetIndex;
 
         bool m_ResourcesExpanded = false;
+        bool m_MultiAssetExpanded = false;
         int m_CameraIndex = 0;
 
         bool m_ExportBakeTransform;
@@ -75,6 +78,8 @@ namespace GaussianSplatting.Editor
             m_PropShaderDebugPoints = serializedObject.FindProperty("m_ShaderDebugPoints");
             m_PropShaderDebugBoxes = serializedObject.FindProperty("m_ShaderDebugBoxes");
             m_PropCSSplatUtilities = serializedObject.FindProperty("m_CSSplatUtilities");
+            m_PropAssets = serializedObject.FindProperty("m_Assets");
+            m_PropActiveAssetIndex = serializedObject.FindProperty("m_ActiveAssetIndex");
 
             s_AllEditors.Add(this);
         }
@@ -94,6 +99,39 @@ namespace GaussianSplatting.Editor
 
             GUILayout.Label("Data Asset", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(m_PropAsset);
+
+            EditorGUI.indentLevel++;
+            m_MultiAssetExpanded = EditorGUILayout.Foldout(m_MultiAssetExpanded, "Assets (list)", true);
+            if (m_MultiAssetExpanded)
+            {
+                EditorGUILayout.PropertyField(m_PropAssets, GUIContent.none, includeChildren: true);
+                if (m_PropAssets.isArray)
+                {
+                    int count = m_PropAssets.arraySize;
+                    if (count > 0)
+                    {
+                        int newIdx = Mathf.Clamp(EditorGUILayout.IntField("Active Asset Index", m_PropActiveAssetIndex.intValue), 0, count - 1);
+                        if (newIdx != m_PropActiveAssetIndex.intValue)
+                        {
+                            m_PropActiveAssetIndex.intValue = newIdx;
+                            var element = m_PropAssets.GetArrayElementAtIndex(newIdx);
+                            m_PropAsset.objectReferenceValue = element.objectReferenceValue;
+                        }
+                        var current = m_PropAsset.objectReferenceValue as GaussianSplatAsset;
+                        EditorGUILayout.ObjectField("Current Asset (synced)", current, typeof(GaussianSplatAsset), false);
+
+                        if (GUILayout.Button("Create Renderers For All Assets"))
+                        {
+                            CreateRenderersForAssets(gs);
+                        }
+                    }
+                    else
+                    {
+                        EditorGUILayout.HelpBox("Drag one or more GaussianSplatAsset files into the list above to manage multiple variants.", MessageType.Info);
+                    }
+                }
+            }
+            EditorGUI.indentLevel--;
 
             if (!gs.HasValidAsset)
             {
@@ -193,6 +231,47 @@ namespace GaussianSplatting.Editor
             if (GUILayout.Button($"Merge into {target.name}"))
             {
                 MergeSplatObjects();
+            }
+        }
+
+        void CreateRenderersForAssets(GaussianSplatRenderer src)
+        {
+            if (m_PropAssets == null || !m_PropAssets.isArray)
+                return;
+            int count = m_PropAssets.arraySize;
+            if (count == 0)
+                return;
+
+            for (int i = 0; i < count; ++i)
+            {
+                var element = m_PropAssets.GetArrayElementAtIndex(i);
+                var asset = element.objectReferenceValue as GaussianSplatAsset;
+                if (asset == null)
+                    continue;
+
+                var go = new GameObject($"Splat_{asset.name}");
+                Undo.RegisterCreatedObjectUndo(go, "Create Gaussian Splat Renderer");
+                go.transform.SetPositionAndRotation(src.transform.position, src.transform.rotation);
+                go.transform.localScale = src.transform.localScale;
+
+                var r = go.AddComponent<GaussianSplatRenderer>();
+                r.m_Asset = asset;
+                r.m_RenderOrder = src.m_RenderOrder;
+                r.m_SplatScale = src.m_SplatScale;
+                r.m_OpacityScale = src.m_OpacityScale;
+                r.m_SHOrder = src.m_SHOrder;
+                r.m_SHOnly = src.m_SHOnly;
+                r.m_SortNthFrame = src.m_SortNthFrame;
+                r.m_RenderMode = src.m_RenderMode;
+                r.m_PointDisplaySize = src.m_PointDisplaySize;
+                r.m_Cutouts = src.m_Cutouts;
+                r.m_ShaderSplats = src.m_ShaderSplats;
+                r.m_ShaderComposite = src.m_ShaderComposite;
+                r.m_ShaderDebugPoints = src.m_ShaderDebugPoints;
+                r.m_ShaderDebugBoxes = src.m_ShaderDebugBoxes;
+                r.m_CSSplatUtilities = src.m_CSSplatUtilities;
+
+                Undo.RegisterCreatedObjectUndo(r, "Create Gaussian Splat Renderer");
             }
         }
 

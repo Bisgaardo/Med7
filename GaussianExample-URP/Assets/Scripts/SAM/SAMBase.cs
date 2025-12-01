@@ -65,6 +65,10 @@ public class SAMBase : MonoBehaviour
     public bool probeDepthPlaneUseAutoSlack = true;
     [Tooltip("Enable CPU depth plane culling after the probe runs.")]
     public bool useProbeDepthPlaneCull = true;
+    [Tooltip("Allow left-click to add positive points. Disable to avoid accidental point adds.")]
+    public bool allowPositivePointClick = true;
+    [Tooltip("Additional renderers affected by manual selection/cull (the primary gs is always included).")]
+    public List<GaussianSplatRenderer> extraRenderers = new List<GaussianSplatRenderer>();
     [Tooltip("Debug: when enabled, the probe depth cull clears EVERY selected splat regardless of depth.")]
     public bool probeForceCullAll = false;
     [Header("Visualization")]
@@ -127,7 +131,7 @@ public class SAMBase : MonoBehaviour
         if (!Application.isPlaying) return;
 
         // Left click adds a positive point (normalized BL coordinates relative to sourceCamera viewport)
-        if (Input.GetMouseButtonDown(0))
+        if (allowPositivePointClick && Input.GetMouseButtonDown(0))
         {
             Vector2 mp = Input.mousePosition; // screen space (origin bottom-left)
             Rect r = sourceCamera ? sourceCamera.pixelRect : new Rect(0, 0, Screen.width, Screen.height);
@@ -365,82 +369,126 @@ public class SAMBase : MonoBehaviour
             }
             m_LastZoeDepthCullOffset = zoeDepthCullOffset;
 
-            try { if (System.IO.File.Exists(inPath)) System.IO.File.Delete(inPath); } catch { }
-            try { if (System.IO.File.Exists(outPath)) System.IO.File.Delete(outPath); } catch { }
-            try { if (System.IO.File.Exists(depthPath)) System.IO.File.Delete(depthPath); } catch { }
+            // DEBUG: save mask + depth PNGs somewhere persistent
+            try
+            {
+                var debugDir = System.IO.Path.Combine(Application.dataPath, "DebugMasks");
+                System.IO.Directory.CreateDirectory(debugDir);
+                Debug.Log("[SAM Lite] DebugMasks dir: " + debugDir);
+
+                // Copy SAM mask
+                if (System.IO.File.Exists(outPath))
+                {
+                    var maskDebugPath = System.IO.Path.Combine(debugDir, $"sam_out_{token}.png");
+                    System.IO.File.Copy(outPath, maskDebugPath, overwrite: true);
+                    Debug.Log("[SAM Lite] Copied SAM mask to: " + maskDebugPath);
+                }
+                else
+                {
+                    Debug.LogWarning("[SAM Lite] outPath did not exist when trying to copy: " + outPath);
+                }
+
+                // Copy ZoeDepth (if it exists)
+                if (System.IO.File.Exists(depthPath))
+                {
+                    var depthDebugPath = System.IO.Path.Combine(debugDir, $"sam_depth_{token}.png");
+                    System.IO.File.Copy(depthPath, depthDebugPath, overwrite: true);
+                    Debug.Log("[SAM Lite] Copied depth PNG to: " + depthDebugPath);
+                }
+                else
+                {
+                    Debug.LogWarning("[SAM Lite] depthPath did not exist when trying to copy: " + depthPath);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError("[SAM Lite] Debug save failed: " + ex);
+            }
+
+            // you can keep or remove the temp deletes; copies stay alive
+            try { if (System.IO.File.Exists(inPath))   System.IO.File.Delete(inPath); } catch { }
+            try { if (System.IO.File.Exists(outPath))  System.IO.File.Delete(outPath); } catch { }
+            try { if (System.IO.File.Exists(depthPath))System.IO.File.Delete(depthPath); } catch { }
+
             if (maskTex) Destroy(maskTex);
             yield break;
-        }
+
+    }
     
 
     IEnumerator ApplyMaskToSelection(Texture2D maskTex, Texture2D depthTex)
     {
-        if (!gs || !maskSelectCS) yield break;
-        int splatCount = gs.splatCount;
-        if (splatCount <= 0) yield break;
+        if (!maskSelectCS) yield break;
 
-        gs.EditDeselectAll();
-        var sel = gs.GpuEditSelected;
-        if (sel == null)
+        foreach (var tgt in GetTargetRenderers())
         {
-            Debug.LogWarning("[SAM Lite] Selection buffer unavailable; selection update skipped.");
-            yield break;
+            if (tgt == null || !tgt.HasValidAsset || tgt.splatCount <= 0)
+                continue;
+
+            tgt.EditDeselectAll();
+            var sel = tgt.GpuEditSelected;
+            if (sel == null)
+            {
+                Debug.LogWarning("[SAM Lite] Selection buffer unavailable; selection update skipped.");
+                continue;
+            }
+
+            var viewBuffer = s_ViewBufferField?.GetValue(tgt) as GraphicsBuffer;
+            var posBuffer = tgt.GetPosBuffer();
+            if (viewBuffer == null || posBuffer == null)
+            {
+                Debug.LogWarning("[SAM Lite] Unable to access splat buffers; selection update skipped.");
+                continue;
+            }
+
+            int splatCount = tgt.splatCount;
+            maskSelectCS.SetBuffer(kApply, "_SplatViewData", viewBuffer);
+            maskSelectCS.SetBuffer(kApply, "_SplatPos", posBuffer);
+            maskSelectCS.SetTexture(kApply, "_MaskTex", maskTex);
+            maskSelectCS.SetFloat("_DepthProbeActive", useProbeDepthPlaneCull ? 1f : 0f);
+            bool depthValid = depthTex != null;
+            maskSelectCS.SetTexture(kApply, "_DepthTex", depthValid ? depthTex : Texture2D.blackTexture);
+            maskSelectCS.SetInt("_UseZoeDepthCull", depthValid ? 1 : 0);
+            maskSelectCS.SetFloat("_ZoeDepthCullOffset", Mathf.Max(0f, zoeDepthCullOffset));
+            maskSelectCS.SetInt("_SplatCount", splatCount);
+            maskSelectCS.SetInts("_MaskSize", maskTex.width, maskTex.height);
+            maskSelectCS.SetInt("_MaskPixelCount", maskTex.width * maskTex.height);
+            int renderW = sourceCamera ? Mathf.Max(1, sourceCamera.pixelWidth) : Mathf.Max(1, Screen.width);
+            int renderH = sourceCamera ? Mathf.Max(1, sourceCamera.pixelHeight) : Mathf.Max(1, Screen.height);
+            maskSelectCS.SetFloats("_RenderViewportSize", renderW, renderH);
+            maskSelectCS.SetFloat("_Threshold", Mathf.Clamp01(maskThreshold));
+            maskSelectCS.SetInt("_Mode", 0);
+            maskSelectCS.SetInt("_AlwaysIncludeMask", 0);
+            maskSelectCS.SetInt("_CollectHistogram", 0);
+            maskSelectCS.SetInt("_UseDepthGate", 0);
+            maskSelectCS.SetInt("_UsePerPixelDepth", 0);
+            maskSelectCS.SetInt("_ApplyPerPixelOcclusion", 0);
+            maskSelectCS.SetFloat("_DepthOcclusionBias", 0f);
+            maskSelectCS.SetMatrix("_ObjectToWorld", tgt.transform.localToWorldMatrix);
+            maskSelectCS.SetInt("_UseEllipseProbe", 0);
+            maskSelectCS.SetInt("_UseCenterMask", 0);
+            maskSelectCS.SetInt("_MaxRadiusPx", 0);
+            maskSelectCS.SetInt("_MinRadiusPx", 0);
+            maskSelectCS.SetFloat("_MaxEccentricity", 0f);
+            maskSelectCS.SetFloat("_MaxAreaPx", 0f);
+            maskSelectCS.SetInt("_UseProbeSphere", 0);
+            maskSelectCS.SetFloats("_ProbeSphereCenter", 0f, 0f, 0f, 0f);
+            maskSelectCS.SetFloat("_ProbeSphereRadius", 0f);
+            maskSelectCS.SetInt("_MorphologyMode", 0);
+            maskSelectCS.SetInt("_MorphRadiusPx", 0);
+            maskSelectCS.SetInt("_UseBoxGate", 0);
+            maskSelectCS.SetInt("_UseBoxGateBL", 0);
+            maskSelectCS.SetFloats("_GateRectTLBR", 0f, 0f, 1f, 1f);
+            maskSelectCS.SetFloats("_GateRectBL", 0f, 0f, 1f, 1f);
+            maskSelectCS.SetInt("_UseROI", 0);
+            maskSelectCS.SetFloats("_ROIMinMax", 0f, 0f, 1f, 1f);
+
+            maskSelectCS.SetBuffer(kApply, "_SelectedBits", sel);
+            int groups = Mathf.Max(1, Mathf.CeilToInt(splatCount / 128f));
+            maskSelectCS.Dispatch(kApply, groups, 1, 1);
+
+            tgt.UpdateEditCountsAndBounds();
         }
-
-        var viewBuffer = s_ViewBufferField?.GetValue(gs) as GraphicsBuffer;
-        var posBuffer = gs ? gs.GetPosBuffer() : null;
-        if (viewBuffer == null || posBuffer == null)
-        {
-            Debug.LogWarning("[SAM Lite] Unable to access splat buffers; selection update skipped.");
-            yield break;
-        }
-
-        maskSelectCS.SetBuffer(kApply, "_SplatViewData", viewBuffer);
-        maskSelectCS.SetBuffer(kApply, "_SplatPos", posBuffer);
-        maskSelectCS.SetTexture(kApply, "_MaskTex", maskTex);
-        maskSelectCS.SetFloat("_DepthProbeActive", useProbeDepthPlaneCull ? 1f : 0f);
-        bool depthValid = depthTex != null;
-        maskSelectCS.SetTexture(kApply, "_DepthTex", depthValid ? depthTex : Texture2D.blackTexture);
-        maskSelectCS.SetInt("_UseZoeDepthCull", depthValid ? 1 : 0);
-        maskSelectCS.SetFloat("_ZoeDepthCullOffset", Mathf.Max(0f, zoeDepthCullOffset));
-        maskSelectCS.SetInt("_SplatCount", splatCount);
-        maskSelectCS.SetInts("_MaskSize", maskTex.width, maskTex.height);
-        maskSelectCS.SetInt("_MaskPixelCount", maskTex.width * maskTex.height);
-        int renderW = sourceCamera ? Mathf.Max(1, sourceCamera.pixelWidth) : Mathf.Max(1, Screen.width);
-        int renderH = sourceCamera ? Mathf.Max(1, sourceCamera.pixelHeight) : Mathf.Max(1, Screen.height);
-        maskSelectCS.SetFloats("_RenderViewportSize", renderW, renderH);
-        maskSelectCS.SetFloat("_Threshold", Mathf.Clamp01(maskThreshold));
-        maskSelectCS.SetInt("_Mode", 0);
-        maskSelectCS.SetInt("_AlwaysIncludeMask", 0);
-        maskSelectCS.SetInt("_CollectHistogram", 0);
-        maskSelectCS.SetInt("_UseDepthGate", 0);
-        maskSelectCS.SetInt("_UsePerPixelDepth", 0);
-        maskSelectCS.SetInt("_ApplyPerPixelOcclusion", 0);
-        maskSelectCS.SetFloat("_DepthOcclusionBias", 0f);
-        maskSelectCS.SetMatrix("_ObjectToWorld", gs.transform.localToWorldMatrix);
-        maskSelectCS.SetInt("_UseEllipseProbe", 0);
-        maskSelectCS.SetInt("_UseCenterMask", 0);
-        maskSelectCS.SetInt("_MaxRadiusPx", 0);
-        maskSelectCS.SetInt("_MinRadiusPx", 0);
-        maskSelectCS.SetFloat("_MaxEccentricity", 0f);
-        maskSelectCS.SetFloat("_MaxAreaPx", 0f);
-        maskSelectCS.SetInt("_UseProbeSphere", 0);
-        maskSelectCS.SetFloats("_ProbeSphereCenter", 0f, 0f, 0f, 0f);
-        maskSelectCS.SetFloat("_ProbeSphereRadius", 0f);
-        maskSelectCS.SetInt("_MorphologyMode", 0);
-        maskSelectCS.SetInt("_MorphRadiusPx", 0);
-        maskSelectCS.SetInt("_UseBoxGate", 0);
-        maskSelectCS.SetInt("_UseBoxGateBL", 0);
-        maskSelectCS.SetFloats("_GateRectTLBR", 0f, 0f, 1f, 1f);
-        maskSelectCS.SetFloats("_GateRectBL", 0f, 0f, 1f, 1f);
-        maskSelectCS.SetInt("_UseROI", 0);
-        maskSelectCS.SetFloats("_ROIMinMax", 0f, 0f, 1f, 1f);
-
-        maskSelectCS.SetBuffer(kApply, "_SelectedBits", sel);
-        int groups = Mathf.Max(1, Mathf.CeilToInt(splatCount / 128f));
-        maskSelectCS.Dispatch(kApply, groups, 1, 1);
-
-        gs.UpdateEditCountsAndBounds();
         yield return null;
 
     }
@@ -578,7 +626,7 @@ public class SAMBase : MonoBehaviour
 
     void RunProbeCull(bool logWarnings)
     {
-        if (!Application.isPlaying || gs == null)
+        if (!Application.isPlaying)
             return;
         if (!useProbeDepthPlaneCull)
             return;
@@ -619,42 +667,48 @@ public class SAMBase : MonoBehaviour
         m_ProbeClipTolNdc = clipTolNdc;
         UpdateProbePlaneDepths(m_ProbeClipDepthNdc, clipTolNdc);
 
-        if (sourceCamera == null)
-            return;
-
-        var sel = gs.GpuEditSelected;
-        if (sel == null)
-        {
-            if (logWarnings)
-                Debug.LogWarning("[SAM Lite] Probe cull skipped: selection or splat buffer unavailable.");
-            return;
-        }
-        int splatCount = gs.splatCount;
-        if (splatCount <= 0)
-        {
-            if (logWarnings)
-                Debug.LogWarning("[SAM Lite] Probe cull skipped: no splats available.");
-            return;
-        }
-        var posBuffer = gs.GetPosBuffer();
-
         float planeTolNdc = clipTolNdc;
         if (!probeDepthPlaneUseAutoSlack)
             planeTolNdc += probeDepthPlaneSlackNdc;
 
         m_LastProbeCullTolNdc = planeTolNdc;
         UpdateProbePlaneDepths(m_ProbeClipDepthNdc, planeTolNdc);
-        if (!gs.ApplyProbeDepthCullGPU(m_LastProbeWorldToClip, m_ProbeClipDepthNdc, planeTolNdc, probeForceCullAll))
+        ApplyProbeDepthCullGPUForTargets(m_LastProbeWorldToClip, m_ProbeClipDepthNdc, planeTolNdc, logWarnings);
+    }
+
+    bool ApplyProbeDepthCullGPUForTargets(Matrix4x4 worldToClip, float baseDepthNdc, float tolNdc, bool logWarnings)
+    {
+        bool any = false;
+        foreach (var tgt in GetTargetRenderers())
         {
-            if (logWarnings)
-                Debug.LogWarning("[SAM Lite] Probe cull skipped: GPU kernel unavailable.");
+            if (tgt == null)
+                continue;
+            var sel = tgt.GpuEditSelected;
+            if (sel == null)
+            {
+                if (logWarnings)
+                    Debug.LogWarning($"[SAM Lite] Probe cull skipped for {tgt.name}: selection or splat buffer unavailable.");
+                continue;
+            }
+            int splatCount = tgt.splatCount;
+            if (splatCount <= 0)
+            {
+                if (logWarnings)
+                    Debug.LogWarning($"[SAM Lite] Probe cull skipped for {tgt.name}: no splats available.");
+                continue;
+            }
+            var posBuffer = tgt.GetPosBuffer();
+            float tolPer = tolNdc;
+
+            if (!tgt.ApplyProbeDepthCullGPU(worldToClip, baseDepthNdc, tolPer, probeForceCullAll))
+            {
+                if (logWarnings)
+                    Debug.LogWarning($"[SAM Lite] Probe cull skipped for {tgt.name}: GPU kernel unavailable.");
+            }
+            StartCoroutine(ApplyProbeDepthCullCPU(tgt, sel, posBuffer, splatCount, sourceCamera, m_ZoeProbeWorld, baseDepthNdc, tolPer));
+            any = true;
         }
-        if (m_ProbeCullCoroutine != null)
-        {
-            StopCoroutine(m_ProbeCullCoroutine);
-            m_ProbeCullCoroutine = null;
-        }
-        m_ProbeCullCoroutine = StartCoroutine(ApplyProbeDepthCullCPU(sel, posBuffer, splatCount, sourceCamera, m_ZoeProbeWorld, m_ProbeClipDepthNdc, planeTolNdc));
+        return any;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -667,20 +721,21 @@ public class SAMBase : MonoBehaviour
         public uint colorHi;
     }
 
-    IEnumerator ApplyProbeDepthCullCPU(GraphicsBuffer selectedBits,
+    IEnumerator ApplyProbeDepthCullCPU(GaussianSplatRenderer tgt,
+                                       GraphicsBuffer selectedBits,
                                        GraphicsBuffer posBuffer,
                                        int splatCount,
                                        Camera cam,
                                        Vector3 centerWorld,
                                        float probeDepthNdc,
-                                       float tolNdc)
+                                        float tolNdc)
     {
         try
         {
-            if (selectedBits == null || gs == null || cam == null)
+            if (selectedBits == null || tgt == null || cam == null)
                 yield break;
 
-            var viewBuffer = s_ViewBufferField?.GetValue(gs) as GraphicsBuffer;
+            var viewBuffer = s_ViewBufferField?.GetValue(tgt) as GraphicsBuffer;
             if (viewBuffer == null)
             {
                 Debug.LogWarning("[SAM Lite] Probe depth CPU cull: view buffer unavailable.");
@@ -776,7 +831,7 @@ public class SAMBase : MonoBehaviour
                     yield break;
                 }
 
-                gs.UpdateEditCountsAndBounds();
+                tgt.UpdateEditCountsAndBounds();
                 Debug.Log($"[SAM Lite] Probe depth CPU cull removed splats behind ndc {probeDepthNdc:F4} tol {tolNdc:F5}, forceAll={probeForceCullAll}.");
             }
         }
@@ -1008,6 +1063,21 @@ public class SAMBase : MonoBehaviour
             m_PendingProbeCullAfterReapply = false;
             if (useProbeDepthPlaneCull)
                 RunProbeCull(logWarnings: false);
+        }
+    }
+
+    IEnumerable<GaussianSplatRenderer> GetTargetRenderers()
+    {
+        HashSet<GaussianSplatRenderer> seen = new HashSet<GaussianSplatRenderer>();
+        if (gs != null && seen.Add(gs))
+            yield return gs;
+        if (extraRenderers != null)
+        {
+            foreach (var r in extraRenderers)
+            {
+                if (r != null && seen.Add(r))
+                    yield return r;
+            }
         }
     }
 }

@@ -250,7 +250,12 @@ namespace GaussianSplatting.Runtime
             ColorByLabel
         }
 
+        [Tooltip("Active Gaussian Splat asset (auto-synced from the list below).")]
         public GaussianSplatAsset m_Asset;
+        [Tooltip("Optional list to keep multiple splat assets on the same renderer and quickly switch between them.")]
+        public List<GaussianSplatAsset> m_Assets = new();
+        [Tooltip("Index into the Assets list for the active asset.")]
+        public int m_ActiveAssetIndex = 0;
         public int m_RenderOrder;
         [Range(0.1f, 2.0f)] public float m_SplatScale = 1.0f;
         [Range(0.05f, 20.0f)] public float m_OpacityScale = 1.0f;
@@ -317,6 +322,17 @@ namespace GaussianSplatting.Runtime
         bool m_Registered;
 
         static readonly ProfilerMarker s_ProfSort = new(ProfilerCategory.Render, "GaussianSplat.Sort", MarkerFlags.SampleGPU);
+
+        public void SetActiveAssetIndex(int idx)
+        {
+            if (m_Assets == null || m_Assets.Count == 0)
+                return;
+            int clamped = Mathf.Clamp(idx, 0, m_Assets.Count - 1);
+            m_ActiveAssetIndex = clamped;
+            var chosen = m_Assets[clamped];
+            if (chosen != m_Asset)
+                m_Asset = chosen;
+        }
 
         internal static class Props
         {
@@ -406,6 +422,23 @@ namespace GaussianSplatting.Runtime
         public bool HasValidRenderSetup => m_GpuPosData != null && m_GpuOtherData != null && m_GpuChunks != null;
 
         const int kGpuViewDataSize = 40;
+
+        void OnValidate()
+        {
+            m_SplatScale = Mathf.Clamp(m_SplatScale, 0.01f, 10.0f);
+            m_OpacityScale = Mathf.Clamp(m_OpacityScale, 0.01f, 50.0f);
+            m_SHOrder = Mathf.Clamp(m_SHOrder, 0, 3);
+
+            if (m_Assets == null)
+                m_Assets = new List<GaussianSplatAsset>();
+            if (m_Assets.Count > 0)
+            {
+                m_ActiveAssetIndex = Mathf.Clamp(m_ActiveAssetIndex, 0, m_Assets.Count - 1);
+                var chosen = m_Assets[m_ActiveAssetIndex];
+                if (chosen != null)
+                    m_Asset = chosen;
+            }
+        }
 
         void CreateResourcesForAsset()
         {
