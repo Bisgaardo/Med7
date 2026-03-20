@@ -1,19 +1,20 @@
-# Med7
-The Med 7 project from group 5
+
+<img width="783" height="373" alt="image" src="https://github.com/user-attachments/assets/4ec963b8-95f6-4c66-9174-5b8e9c2b0a87" />
+
+
+Semi-Automatic View-Based Segmentation of Gaussian Splat Scenes
+
+This project builds on Aras Pranckevičius’ Unity Gaussian Splatting renderer and integrates it with:
+
+    SAM (Segment Anything Model) – to get a 2D segmentation mask from a single camera view.
+    ZoeDepth – to estimate depth in the same view and use that depth to prune the SAM selection in 3D.
+
+The goal is interactive, depth-aware selection of Gaussian splats in Unity: click on an object in the view → SAM selects everything in that 2D region → ZoeDepth finds the depth of the clicked surface → splats behind that depth get deselected, leaving a selection that approximates the intended 3D object.
 
 ---
 
-# Gaussian Splat Selection with SAM + ZoeDepth
+<img width="1248" height="662" alt="image" src="https://github.com/user-attachments/assets/fbcc95c2-b186-4956-88cf-8913fd906e6a" />
 
-This project builds on **Aras Pranckevičius’ Unity Gaussian Splatting renderer** and integrates it with:
-
-* **SAM (Segment Anything Model)** – to get a 2D segmentation mask from a single camera view.
-* **ZoeDepth** – to estimate depth in the same view and use that depth to prune the SAM selection in 3D.
-
-The goal is **interactive, depth-aware selection of Gaussian splats in Unity**:
-click on an object in the view → SAM selects everything in that 2D region → ZoeDepth finds the depth of the clicked surface → splats *behind* that depth get deselected, leaving a selection that approximates the intended 3D object.
-
----
 
 ## High-level pipeline
 
