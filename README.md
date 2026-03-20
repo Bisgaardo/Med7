@@ -1,283 +1,261 @@
 ![Visual](Truck_visual.png)
 
-
 # Semi-Automatic View-Based Segmentation of Gaussian Splat Scenes
 
-This project builds on **Aras Pranckevičius’ Unity Gaussian Splatting renderer** and integrates it with:
+This project builds on **Aras Pranckevičius' Unity Gaussian Splatting renderer** and integrates it with:
 
-* **SAM (Segment Anything Model)** – to get a 2D segmentation mask from a single camera view.
-* **ZoeDepth** – to estimate depth in the same view and use that depth to prune the SAM selection in 3D.
+- **SAM (Segment Anything Model)** to obtain a 2D segmentation mask from a single camera view.
+- **ZoeDepth** to estimate depth in the same view and use that depth to prune the SAM selection in 3D.
 
 The goal is **interactive, depth-aware selection of Gaussian splats in Unity**:
-click on an object in the view → SAM selects everything in that 2D region → ZoeDepth finds the depth of the clicked surface → splats *behind* that depth get deselected, leaving a selection that approximates the intended 3D object.
+click on an object in the view, let SAM segment the corresponding 2D region, estimate the clicked surface depth with ZoeDepth, and deselect splats behind that depth to approximate the intended 3D object.
 
 ---
 
 ![Visual](GausExample.gif)
 
+## High-Level Pipeline
 
-## High-level pipeline
+### 1. Gaussian splats
 
-### 1. Gaussian splats (Aras’ renderer)
+A `.ply` file is converted offline into a Gaussian splat asset:
 
-* A `.ply` file is converted (offline) into a Gaussian splat asset:
+- Positions and other attributes are packed into GPU buffers such as `_SplatPos` and `_SplatColor`.
+- Chunk-local AABBs and compact encodings such as 11-11-10 are used for compression.
 
-  * Positions and other attributes are packed into GPU buffers (`_SplatPos`, `_SplatColor`, etc.).
-  * Chunk-local AABBs and encoding formats (11-11-10, etc.) are used for compression.
-* At runtime, `GaussianSplatRenderer`:
+At runtime, `GaussianSplatRenderer`:
 
-  * Uploads the asset to GPU.
-  * Uses compute shaders (`SplatUtilities.compute`) to build per-splat **view data** (`SplatViewData`) for the current camera.
-  * Renders splats with `RenderGaussianSplats.shader`.
+- Uploads the asset to the GPU.
+- Uses compute shaders such as `SplatUtilities.compute` to build per-splat **view data** (`SplatViewData`) for the active camera.
+- Renders splats with `RenderGaussianSplats.shader`.
 
 Important invariants:
 
-* **Object/world/camera spaces** are standard Unity:
-
-  * Local splat position → `localToWorld` → `worldToCamera` → `GL.GetGPUProjectionMatrix`.
-  * Depth is `clip.z / clip.w`, then mapped to NDC [0,1] for gating.
-* The position buffer (`_SplatPos` / `m_GpuPosData`) is a **packed ByteAddressBuffer**, not an array of `float3`. Do **not** treat it as `Vector3[]` on CPU; use the view buffer or decoded CPU data instead.
+- **Object, world, and camera spaces** follow standard Unity conventions.
+  Local splat position -> `localToWorld` -> `worldToCamera` -> `GL.GetGPUProjectionMatrix`.
+- Depth is computed as `clip.z / clip.w` and mapped to NDC `[0,1]` for depth gating.
+- The position buffer (`_SplatPos` / `m_GpuPosData`) is a **packed `ByteAddressBuffer`**, not an array of `float3`.
+  It must not be treated as `Vector3[]` on the CPU. Use the view buffer or decoded CPU-side asset data instead.
 
 ### 2. Central selection buffer: `_SplatSelectedBits`
 
-All editing/selection flows through one GPU bitfield:
+All editing and selection flows through a single GPU bitfield:
 
-* `GaussianSplatRenderer` owns `m_GpuEditSelected`, exposed via `GpuEditSelected`.
-* In shaders this is `_SplatSelectedBits`: a **bit-per-splat** buffer.
-* If a bit is 1 → splat is “selected” (for highlighting, deleting, labeling, etc.).
-* `UpdateEditCountsAndBounds()`:
+- `GaussianSplatRenderer` owns `m_GpuEditSelected`, exposed as `GpuEditSelected`.
+- In shaders this appears as `_SplatSelectedBits`, a **bit-per-splat** buffer.
+- If a bit is `1`, the corresponding splat is selected for highlighting, deletion, labeling, or other downstream operations.
 
-  * Scans `_SplatSelectedBits` on GPU.
-  * Computes:
+`UpdateEditCountsAndBounds()` scans `_SplatSelectedBits` on the GPU and computes:
 
-    * `editSelectedSplats`
-    * `editDeletedSplats`
-    * `editCutSplats`
-    * `editSelectedBounds` (AABB of selected splats).
+- `editSelectedSplats`
+- `editDeletedSplats`
+- `editCutSplats`
+- `editSelectedBounds`, the AABB of the selected splats
 
-Any tool (SAM, ZoeDepth, future segmentation) that wants to change selection must:
+Any tool that modifies selection, including SAM, ZoeDepth, or future segmentation methods, must:
 
-1. Set/clear bits in `_SplatSelectedBits`.
+1. Set or clear bits in `_SplatSelectedBits`.
 2. Call `UpdateEditCountsAndBounds()`.
 
-This is the contract.
+This is the central contract for selection state.
 
----
+## SAM and ZoeDepth Integration
 
-## SAM + ZoeDepth integration
+### 3. Python sidecar (`cli_sam.py` and `SAM.py`)
 
-### 3. Python sidecar (`cli_sam.py` + `SAM.py`)
+A Python process runs alongside Unity and exposes a simple line-based protocol.
 
-A Python process runs alongside Unity and exposes a simple line-based protocol:
+Each input JSON request includes:
 
-* Input JSON (one line per request) includes:
+- `image`: path to the captured RGB PNG
+- `points`: positive click points in normalized image coordinates
+- `out`: path to the SAM mask PNG
+- `depth_out`: path to the ZoeDepth PNG
+- `zoe_variant`, `zoe_root`, `zoe_max_dim`, and related options
 
-  * `image`: path to the captured RGB PNG.
-  * `points`: positive click(s) in normalized image coordinates.
-  * `out`: path to write the SAM mask PNG.
-  * `depth_out`: path to write the ZoeDepth PNG.
-  * `zoe_variant`, `zoe_root`, `zoe_max_dim`, etc.
+For each request, the sidecar:
 
-For each request the sidecar:
+1. Runs **SAM** to produce a binary mask (`mask.png`) from the positive points.
+2. Runs **ZoeDepth** to estimate a metric depth map `depth_raw` in meters.
+3. Normalizes the per-frame depth map to `[0,1]`:
 
-1. Runs **SAM**:
+```python
+d_min = np.min(depth_raw[finite])
+d_max = np.max(depth_raw[finite])
+depth_norm = (depth_raw - d_min) / max(d_max - d_min, 1e-6)
+```
 
-   * Builds a binary mask (`mask.png`) from the positive points.
-2. Runs **ZoeDepth**:
+4. Writes a 16-bit depth PNG (`depth_out`) containing `depth_norm`.
+5. Writes a `*_meta.json` file containing `depth_min`, `depth_max`, `depth_range`, and optional region statistics.
 
-   * Computes a metric depth map `depth_raw` (meters).
+The sidecar does not know Unity units. It outputs:
 
-   * Normalizes depth per-frame to `[0,1]`:
-
-     ```python
-     d_min = np.min(depth_raw[finite])
-     d_max = np.max(depth_raw[finite])
-     depth_norm = (depth_raw - d_min) / max(d_max - d_min, 1e-6)
-     ```
-
-   * Writes a 16-bit depth PNG (`depth_out`) with `depth_norm`.
-
-   * Writes a `*_meta.json` with `depth_min`, `depth_max`, `depth_range`, plus optional stats for the masked region.
-
-The sidecar does **not** know Unity units. It outputs:
-
-* SAM mask: 0/1 in image space.
-* Zoe depth: normalized [0,1] per frame, plus metadata with metric min/max.
+- A SAM mask in image space
+- A ZoeDepth map normalized to `[0,1]` for the current frame
+- Metadata containing the original metric depth range
 
 ### 4. Unity SAM client (`SAMBase.cs`)
 
-`SAMBase` runs inside Unity and coordinates capture, SAM, ZoeDepth, and selection:
+`SAMBase` coordinates capture, SAM, ZoeDepth, and selection inside Unity.
 
 1. **Capture**
 
-   * Grabs a downsampled render of `sourceCamera` at `captureSize`.
-   * Saves it as a temporary PNG.
-   * Builds a JSON payload with:
-
-     * Image path.
-     * Positive points (converted to top-left normalized coordinates).
-     * Output paths for mask and depth.
+   - Captures a downsampled render from `sourceCamera` at `captureSize`
+   - Saves it as a temporary PNG
+   - Builds a JSON payload containing the image path, positive points, and output paths for mask and depth
 
 2. **Call Python worker**
 
-   * Starts `pythonExe` with `cli_sam.py --loop` once, then streams JSON requests over stdin.
-   * Waits for a JSON response or times out.
+   - Starts `pythonExe` with `cli_sam.py --loop` once
+   - Streams JSON requests over `stdin`
+   - Waits for a JSON response or a timeout
 
 3. **Load mask and depth**
 
-   * `maskTex` = R8 PNG, `W × H`.
-   * `depthTex` = Zoe depth PNG.
-   * Keeps `m_LastMaskTex` and `m_LastDepthTex` for re-application.
+   - Loads `maskTex` as an `R8` PNG
+   - Loads `depthTex` from the ZoeDepth output PNG
+   - Stores `m_LastMaskTex` and `m_LastDepthTex` for re-application
 
-4. **Apply mask to selection** – `ApplyMaskToSelection(maskTex, depthTex)`
+4. **Apply mask to selection** via `ApplyMaskToSelection(maskTex, depthTex)`
 
-   * Calls `gs.EditDeselectAll()` (clear `_SplatSelectedBits`).
-   * Binds:
-
-     * `_SplatViewData` (view buffer).
-     * `_SplatPos` (raw positions).
-     * `_MaskTex` (SAM mask).
-     * `_DepthTex` (Zoe depth) if available.
-   * Dispatches the `ApplyMaskSelection` kernel in `MaskSelect.compute`.
+   - Calls `gs.EditDeselectAll()` to clear `_SplatSelectedBits`
+   - Binds `_SplatViewData`, `_SplatPos`, `_MaskTex`, and optionally `_DepthTex`
+   - Dispatches the `ApplyMaskSelection` kernel in `MaskSelect.compute`
 
    The kernel:
 
-   * Projects each splat into the mask image using `SplatViewData.pos` (clip space → NDC → pixels).
-   * Samples the mask.
-   * If mask ≥ threshold → sets bit in `_SplatSelectedBits`.
-   * Optionally uses Zoe depth (`_DepthTex` + `_ZoeDepthCullOffset`) to reject splats too far behind the 2D mask (per-pixel).
+   - Projects each splat into the mask image using `SplatViewData.pos`
+   - Samples the mask
+   - Sets the corresponding bit in `_SplatSelectedBits` when the mask passes threshold
+   - Optionally uses ZoeDepth and `_ZoeDepthCullOffset` to reject splats too far behind the 2D selection
 
-   After dispatch, `GaussianSplatRenderer.UpdateEditCountsAndBounds()` runs, so the editor knows which splats are selected.
+   After dispatch, `GaussianSplatRenderer.UpdateEditCountsAndBounds()` is called so the editor state stays consistent.
 
-5. **Depth probe (plane for ZoeDepth)** – `RunProbeCull()`
+5. **Depth probe** via `RunProbeCull()`
 
-   * Requires:
+   Requires:
 
-     * At least one `positivePoints[0]`.
-     * A valid `m_LastDepthTex`.
+   - At least one positive point in `positivePoints[0]`
+   - A valid `m_LastDepthTex`
 
-   * Samples Zoe depth at that point:
+   ZoeDepth is sampled at the clicked image coordinate:
 
-     ```csharp
-     float zoeDepthNorm = depthTex.GetPixel(px, py).r; // 0..1
-     ```
+```csharp
+float zoeDepthNorm = depthTex.GetPixel(px, py).r; // 0..1
+```
 
-   * Converts normalized Zoe depth to a probe ray and world point:
+   The normalized depth is then mapped onto the camera ray:
 
-     ```csharp
-     Ray   ray         = sourceCamera.ViewportPointToRay(new Vector3(pt.x, pt.y, 0f));
-     float metricDepth = Mathf.Lerp(nearMeters, farMeters, zoeDepthNorm);
-     Vector3 worldPos  = ray.GetPoint(metricDepth);
-     float ndcDepth    = WorldToNdc01(worldPos); // 0..1
-     ```
+```csharp
+Ray ray = sourceCamera.ViewportPointToRay(new Vector3(pt.x, pt.y, 0f));
+float metricDepth = Mathf.Lerp(nearMeters, farMeters, zoeDepthNorm);
+Vector3 worldPos = ray.GetPoint(metricDepth);
+float ndcDepth = WorldToNdc01(worldPos); // 0..1
+```
 
-   * Computes a tolerance band in NDC using `ComputeProbeTolNdc` (metric meters → NDC delta via marching along the ray).
+   A tolerance band in NDC is computed with `ComputeProbeTolNdc`, which converts a metric tolerance into an NDC depth interval along the same ray.
 
-   * Stores:
+   The result is stored in:
 
-     * `m_ZoeProbeWorld` – world position of the plane.
-     * `m_ProbeClipDepthNdc` – NDC depth of the plane.
-     * `m_ProbeClipTolNdc` – NDC slack for depth band.
+   - `m_ZoeProbeWorld`
+   - `m_ProbeClipDepthNdc`
+   - `m_ProbeClipTolNdc`
 
-   * Triggers the depth cull (CPU or GPU, depending on current implementation).
+   The depth cull is then executed on either the CPU or GPU, depending on the active implementation.
 
 6. **Plane visualization**
 
-   * `OnDrawGizmos` draws:
+   `OnDrawGizmos` visualizes:
 
-     * Blue plane at `m_ProbeForwardDepth` (Zoe depth).
-     * Red plane at `m_LastProbeCullForwardDepth` (Zoe depth + tolerance).
-   * Uses `Camera.CalculateFrustumCorners` at a given forward distance and transforms them to world space.
-   * Optional: draws a small sphere at the probe point on the plane.
+   - A blue plane at `m_ProbeForwardDepth` for the ZoeDepth probe
+   - A red plane at `m_LastProbeCullForwardDepth` for the probe plus tolerance
 
-This gives immediate visual feedback that the Zoe depth and tolerance are mapped correctly before culling anything.
+   This provides immediate visual confirmation that the probe depth and tolerance are mapped correctly before culling is applied.
 
----
-
-## Depth-aware culling
+## Depth-Aware Culling
 
 ### 5. Depth band logic
 
-Conceptually, depth culling works like this:
+Depth culling follows the rule:
 
-* Let `D_splat = depthNdc` of a splat (from `clip.z / clip.w` → NDC 0..1).
-* Let `D_plane = ZoeDepthProbeNdc`.
-* Let `Δ = toleranceNdc`.
+- `D_splat`: splat depth in NDC
+- `D_plane`: probed ZoeDepth plane in NDC
+- `Delta`: tolerance in NDC
 
-Then:
+A splat is considered behind the plane when:
 
-* A splat is considered **behind** the plane if `D_splat > D_plane + Δ`.
-* Those splats have their bit cleared in `_SplatSelectedBits`.
+```text
+D_splat > D_plane + Delta
+```
 
-Two ways to implement:
+Those splats have their bit cleared in `_SplatSelectedBits`.
 
-#### A. GPU cull kernel (ideal)
+Two implementations are supported conceptually.
 
-* Compute shader `CSProbeDepthCull` reads:
+#### A. GPU cull kernel
 
-  * `_SplatViewData` (clip positions).
-  * `_SplatSelectedBits`.
-  * `_ProbeDepthClip` and `_ProbeDepthClipTol`.
-* Per splat:
+`CSProbeDepthCull` reads:
 
-  * Early out if bit not set.
-  * `depth01 = saturate(clip.z / clip.w * 0.5 + 0.5)`.
-  * `clipThreshold = _ProbeDepthClip + _ProbeDepthClipTol`.
-  * If `depth01 > clipThreshold` → clear bit.
+- `_SplatViewData`
+- `_SplatSelectedBits`
+- `_ProbeDepthClip`
+- `_ProbeDepthClipTol`
 
-Optional debug:
+Per splat:
 
-* `_ProbeCullForceAll != 0` → clear all bits regardless of depth to sanity-check the pipeline.
+- Exit early if the selection bit is not set
+- Compute `depth01 = saturate(clip.z / clip.w * 0.5 + 0.5)`
+- Compute `clipThreshold = _ProbeDepthClip + _ProbeDepthClipTol`
+- Clear the selection bit if `depth01 > clipThreshold`
+
+An optional debug mode can force all selected bits to be cleared to validate the pipeline independently of depth values.
 
 #### B. CPU cull prototype
 
-* Read `_SplatSelectedBits` to a `uint[]`.
-* Read `_SplatViewData` to a `SplatViewDataCPU[]`.
-* Loop over selected indices, use `view.pos` as clip position, convert to depth01, and apply the same `depth01 > clipThreshold` rule.
-* Write back the bit array and call `UpdateEditCountsAndBounds()`.
+The CPU path:
 
-The critical point: **never decode positions from `_SplatPos` on CPU**. Always use `SplatViewData` or decoded asset data; `_SplatPos` is packed and chunk-scaled.
+- Reads `_SplatSelectedBits` into a `uint[]`
+- Reads `_SplatViewData` into a `SplatViewDataCPU[]`
+- Iterates over selected indices
+- Converts `view.pos` to `depth01`
+- Applies the same `depth01 > clipThreshold` rule
+- Writes back the modified bit array
+- Calls `UpdateEditCountsAndBounds()`
 
----
+The critical constraint is that positions must never be decoded directly from `_SplatPos` on the CPU. Use `SplatViewData` or decoded asset data instead.
 
-## What this project is *not* doing
+## Out of Scope
 
-* It does **not** train SAM or ZoeDepth. Both are used as frozen pretrained models.
-* It does **not** do view-consistent multi-view SAM fusion yet (one view at a time).
-* It does **not** apply any heavy autograd or gradient-based optimization; all work is runtime compute shader + simple depth math.
+This project does not:
 
----
+- Train SAM or ZoeDepth
+- Perform view-consistent multi-view SAM fusion yet
+- Rely on gradient-based optimization or heavy autograd pipelines
 
-## What this project is aiming toward
+The current implementation is based on runtime compute shaders and straightforward depth-based filtering.
 
-The current scope is:
+## Project Direction
 
-* **Robust interactive selection** of Gaussian splats in Unity via SAM.
-* **Depth-aware pruning** of that selection using ZoeDepth (keep the clicked object, drop background splats).
-* A clean, documented pipeline so other tools (K-Means segmentation, label painting, export/import) can sit on top of the same selection mechanism.
+The current focus is:
 
-Planned/possible extensions (not assumed implemented here):
+- **Robust interactive selection** of Gaussian splats in Unity via SAM
+- **Depth-aware pruning** of that selection using ZoeDepth
+- A clear pipeline that other tools can build on top of, including clustering, label painting, and export or import workflows
 
-* Training-free clustering over per-splat features (color, position, normals) to generate initial segments.
-* Merging SAM-based 2D masks from multiple views into a consistent 3D label field.
-* Simple open-vocabulary selection by associating per-segment text embeddings.
+Possible extensions include:
 
----
+- Training-free clustering over per-splat features such as color, position, and normals
+- Multi-view fusion of SAM-based masks into a consistent 3D label field
+- Open-vocabulary selection through per-segment text embeddings
 
-## Notes for anyone (or any LLM) hacking on this repo
+## Implementation Notes
 
-* Selection is **only** real when it’s in `_SplatSelectedBits` and `UpdateEditCountsAndBounds()` has run.
-* `_SplatPos` is a packed ByteAddressBuffer. Do not call `GetData<Vector3>` on it.
-* Use:
+- Selection is only authoritative when it is represented in `_SplatSelectedBits` and `UpdateEditCountsAndBounds()` has been called.
+- `_SplatPos` is a packed `ByteAddressBuffer`. Do not call `GetData<Vector3>` on it.
+- Use `SplatViewData` for clip-space reprojection.
+- Use decoded asset-level positions if CPU-side world-space access is required.
+- Both compute and CPU-side projection use `worldToCameraMatrix` together with `GL.GetGPUProjectionMatrix(projection, true)`.
+- Depth gating is always performed in NDC, with `clip.z / clip.w` mapped to `[0,1]`.
+- ZoeDepth PNG outputs store **normalized** depth. The physically meaningful scale is stored in `*_meta.json` through `depth_min` and `depth_max`.
 
-  * `SplatViewData` for clip-space re-projection.
-  * Asset-level decoded positions if you must work in CPU world space.
-* Coordinate spaces:
-
-  * Compute and CPU both use `worldToCameraMatrix` + `GL.GetGPUProjectionMatrix(projection, true)`.
-  * Depth gating always works in NDC (`clip.z / clip.w` mapped to [0,1]).
-* ZoeDepth’s PNG holds **normalized depth**; the actual meter scale lives in `*_meta.json` (`depth_min`, `depth_max`). If you need physically meaningful distances, use that metadata instead of a hardcoded 0.5–8 m mapping.
-
----
-
-Use this as the canonical description for any future tooling/chat that needs to understand how SAM, ZoeDepth, and the Gaussian splat renderer fit together.
+This document describes the current architecture and the assumptions that downstream tooling should preserve.
