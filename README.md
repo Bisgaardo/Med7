@@ -1,5 +1,6 @@
 ![Visual](Truck_visual.png)
 
+
 # Semi-Automatic View-Based Segmentation of Gaussian Splat Scenes
 
 This project builds on **Aras Pranckevičius’ Unity Gaussian Splatting renderer** and integrates it with:
